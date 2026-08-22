@@ -1,0 +1,108 @@
+NovelAI Gallery  v1.6
+=====================
+
+WHAT'S NEW IN THIS VERSION
+--------------------------
+
+1. FIRST-RUN SETUP
+   Opening the app for the first time now walks through the things worth
+   deciding once - theme, prompts as tags or plain text, what gets saved,
+   and whether saved images should stay here instead of downloading - and
+   ends on the step that actually matters: installing the extension.
+   Every choice applies as you make it, and all of them are in Settings
+   afterwards. The × skips the whole thing.
+
+2. RIGHT-CLICK MENUS
+   Right-click an image for open, select, move to folder, pin, favorite,
+   reuse prompt, copy prompt, open in folder and delete. Right-click a
+   folder in the sidebar for open and delete. Right-click empty gallery
+   space for import, refresh, select all and new folder. Right-clicking
+   one image of a selection acts on the whole selection.
+   Text boxes keep the browser's own menu, so copy and paste still work
+   where you'd expect them to.
+
+3. FULL-SIZE VIEW WITH ZOOM
+   Small expand icon in the bottom-left of the opened image. Scroll to
+   zoom, drag to move, double-click to toggle fit and 100%. Back button
+   top-left. Keys: F opens it, 0 fits, 1 is actual size, +/- zoom, Esc
+   goes back.
+
+4. PROMPT SECTIONS START COLLAPSED
+   As asked. The count stays on each header, so nothing is hidden - it
+   just doesn't bury the generation settings under a hundred tags.
+
+5. OPEN IN FOLDER ACTUALLY OPENS THE FOLDER NOW
+   It never worked, and the cause is a genuinely nasty Windows quirk.
+   Explorer's /select needs the quotes around the path only:
+
+       explorer.exe /select,"C:\...\NovelAI Gallery\...\x.png"
+
+   Go builds command lines the way the C runtime expects, which quotes the
+   whole argument instead:
+
+       explorer.exe "/select,C:\...\NovelAI Gallery\...\x.png"
+
+   Explorer reads that leading quote as the start of a path, can't make
+   sense of it, and quietly opens Documents - which looks exactly like the
+   button doing nothing. Your data folder has a space in its name, so this
+   bit every single time. The command line is now built by hand, and a
+   launch failure is reported instead of a toast claiming success.
+
+6. NO MORE FLICKER ON AN EMPTY VIEW
+   An empty library, folder, or search flashed a grid of placeholder tiles
+   every few seconds. The skeleton was being re-rendered on every
+   background refresh whenever there was no grid on screen. It's now a
+   first-load affordance only, and an unchanged empty view isn't redrawn
+   at all. Refreshing still happens exactly as often.
+
+7. UNINSTALLING CAN NOW REMOVE EVERYTHING
+   Uninstall asks whether to delete your images and settings as well.
+   Answer No and the library survives for a reinstall, as before; answer
+   Yes and nothing is left behind. It also clears two things the old
+   uninstaller left: the WebView2 cache folder (which kept the whole
+   install directory alive) and the browser-engine data folder. That's
+   what you were seeing survive a reinstall.
+
+
+UPGRADING
+---------
+
+Install over the top; nothing to do in the browser this time, the changes
+are all in the app.
+
+
+IF SOMETHING ISN'T WORKING
+--------------------------
+
+Click the extension's toolbar icon, open "Diagnostics", press "Copy
+diagnostics", and send me that.
+
+
+WHAT'S IN THIS FOLDER
+---------------------
+
+NovelAI-Gallery-Setup.exe  The installer. The only file you need.
+extension\                 Spare copy (the installer already bundles it).
+source\                    Full source, with a build script.
+README.md                  Full documentation.
+
+
+WHAT I TESTED, AND WHAT I COULDN'T
+----------------------------------
+
+119 checks across six suites, all passing. New this round: setup appearing
+on a fresh library and never again after finishing, with every choice made
+during it actually saved; the right-click menus on an image, on a folder
+and on empty space, including drilling into the folder list and closing on
+Escape; the full-size view opening at fit, zooming, returning to fit with
+0, and the Back button landing you where you started; prompt sections
+starting collapsed; and an empty view surviving three refresh cycles with
+zero DOM changes.
+
+What I could not test: anything Windows-specific - the icon, the title bar
+colours, "open in folder", and the uninstaller. There's no Windows machine
+here; the app cross-compiles from Linux. The parts that can be tested off
+Windows are: the installer script compiles, and the command line Explorer
+receives is built by a function with its own unit test pinning the quote
+placement. The rest is reasoning from documented behaviour, and I'd rather
+say so than imply I watched it work.
