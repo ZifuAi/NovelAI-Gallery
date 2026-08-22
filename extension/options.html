@@ -1,0 +1,134 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>NovelAI Gallery Sync — Settings</title>
+  <style>
+    :root {
+      --bg: #0e0f13;
+      --surface: #16181f;
+      --surface-hi: #232733;
+      --border: #2a2f3d;
+      --text: #eceef4;
+      --dim: #a2a9bb;
+      --faint: #6c7488;
+      --accent: #8ba4ff;
+    }
+    body {
+      max-width: 560px;
+      margin: 48px auto;
+      padding: 0 24px 60px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+      font-size: 14px;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+    h1 { font-size: 19px; font-weight: 600; margin: 0 0 6px; letter-spacing: -0.01em; }
+    .sub { color: var(--dim); font-size: 13px; margin-bottom: 30px; line-height: 1.6; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 20px;
+      margin-bottom: 16px;
+    }
+    .card h2 {
+      font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.09em; color: var(--faint); margin: 0 0 14px;
+    }
+
+    .row { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 16px; }
+    .row:last-child { margin-bottom: 0; }
+    .row input[type="checkbox"] { margin-top: 2px; width: 15px; height: 15px; accent-color: var(--accent); }
+    .row .txt { flex: 1; }
+    .row .title { font-size: 13.5px; margin-bottom: 3px; }
+    .row .desc { color: var(--faint); font-size: 12px; line-height: 1.55; }
+
+    label.field-label { display: block; font-size: 13px; margin-bottom: 7px; }
+    input[type="text"] {
+      width: 100%; box-sizing: border-box;
+      padding: 9px 12px; border-radius: 9px;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+      font: inherit; outline: none;
+    }
+    input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(139,164,255,0.14); }
+    .hint { font-size: 12px; color: var(--faint); margin-top: 7px; line-height: 1.55; }
+    .hint code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 4px; padding: 1px 4px; font-size: 11px;
+    }
+    .err {
+      margin-top: 10px; padding: 9px 12px;
+      background: rgba(248,113,113,.09);
+      border: 1px solid rgba(248,113,113,.35);
+      border-radius: 9px;
+      color: #fca5a5; font-size: 12px; line-height: 1.55;
+    }
+
+    .actions { display: flex; align-items: center; gap: 12px; margin-top: 22px; }
+    button.save {
+      padding: 9px 18px; border-radius: 9px; border: none;
+      background: var(--accent); color: #0b0e1a; font: inherit; font-weight: 600;
+      cursor: pointer;
+    }
+    button.save:hover { background: #a3b7ff; }
+    .saved { color: #4ade80; font-size: 12.5px; opacity: 0; transition: opacity 0.2s; }
+    .saved.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <h1>NovelAI Gallery Sync</h1>
+  <div class="sub">
+    Saves the images you generate on NovelAI — along with their prompt and
+    settings — straight into the NovelAI Gallery app on this computer.
+    Nothing is uploaded anywhere else.
+  </div>
+
+  <div class="card">
+    <h2>Automatic capture</h2>
+
+    <div class="row">
+      <input type="checkbox" id="networkCaptureEnabled" />
+      <div class="txt">
+        <div class="title">Catch images as they're generated</div>
+        <div class="desc">Watches for the image coming back from NovelAI and saves it immediately. Fastest, and gets the original file untouched.</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <input type="checkbox" id="domCaptureEnabled" />
+      <div class="txt">
+        <div class="title">Catch images from the history panel</div>
+        <div class="desc">A backup that watches NovelAI's own history strip and saves anything new that appears there. Leave this on unless it's saving things you don't want.</div>
+      </div>
+    </div>
+
+    <div class="hint">
+      Right-clicking any image on NovelAI and choosing <strong>Save image to NovelAI Gallery</strong> always works, whichever of these are switched on.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Advanced</h2>
+    <label class="field-label" for="serverUrl">Gallery app address</label>
+    <input type="text" id="serverUrl" placeholder="Automatic (recommended)" />
+    <div class="hint">
+      Leave this blank — the extension finds the app on its own. This is only
+      for a non-standard local setup, and must be an address on this computer
+      (<code>127.0.0.1</code> or <code>localhost</code>). Do not put a NovelAI
+      address here.
+    </div>
+    <div class="err" id="urlError" style="display:none"></div>
+  </div>
+
+  <div class="actions">
+    <button class="save" id="save">Save settings</button>
+    <span class="saved" id="savedMsg">Saved</span>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>
