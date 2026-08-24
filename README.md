@@ -27,7 +27,7 @@ No account, no cloud, nothing running in the background. Small Windows app + bro
 
 ## Install
 
-1. Download `NovelAI-Gallery-Setup.exe` from the [latest release]([https://github.com/...](https://github.com/ZifuAi/NovelAI-Gallery/releases)) and run it (~2.4 MB, per-user, no admin). 
+1. Download `NovelAI-Gallery-Setup.exe` from the [latest release]([(https://github.com/ZifuAi/NovelAI-Gallery/releases)]) and run it (~2.4 MB, per-user, no admin). 
 2. Complete the short first-run setup.
 3. Load the extension (unpacked):
    - Path: `%APPDATA%\NovelAI Gallery\extension`
