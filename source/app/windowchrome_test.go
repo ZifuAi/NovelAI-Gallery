@@ -116,7 +116,8 @@ func TestSearchTextCoversEveryPromptPart(t *testing.T) {
 		},
 	}
 
-	hay := searchText(r)
+	st := &Store{}
+	hay := st.searchText(r)
 	for _, want := range []string{
 		"base tag", "scenery", // base prompt
 		"pink twintails", "dragon horns", // character 1
@@ -141,7 +142,7 @@ func TestSearchTextCoversEveryPromptPart(t *testing.T) {
 			},
 		},
 	}}}
-	if !containsFold(searchText(renamed), "silver hair") {
+	if !containsFold(st.searchText(renamed), "silver hair") {
 		t.Error("renamed caption fields should still be searchable")
 	}
 }

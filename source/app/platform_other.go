@@ -71,3 +71,9 @@ func fatal(msg string) {
 	fmt.Fprintln(os.Stderr, msg)
 	os.Exit(1)
 }
+
+// runInstaller has no meaning off Windows: there is no installer to run.
+// It exists so update.go compiles during development on Linux.
+func runInstaller(path string) error {
+	return fmt.Errorf("updates can only be installed on Windows")
+}

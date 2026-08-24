@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -179,4 +180,37 @@ func fatal(msg string) {
 	text, _ := syscall.UTF16PtrFromString(msg)
 	messageBox.Call(0, uintptr(unsafe.Pointer(text)), uintptr(unsafe.Pointer(title)), 0x10)
 	os.Exit(1)
+}
+
+// runInstaller starts the downloaded installer and steps out of its way.
+//
+// /S runs it silently - the person already agreed to the update inside the
+// app, so a second wizard would just be a wall of Next buttons - and
+// /RESTART tells it to reopen the app when it's done. The installer's
+// .onInit kills any running copy before it replaces the executable, so the
+// app has to be gone by then; rather than wait to be killed mid-write, it
+// exits itself a moment after the installer is launched.
+func runInstaller(path string) error {
+	clean := filepath.Clean(path)
+
+	cmd := exec.Command(clean, "/S", "/RESTART")
+	// Detached: the installer must outlive the process that started it,
+	// since that process is about to disappear.
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: 0x00000008 | 0x00000200, // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("could not start the installer: %v", err)
+	}
+	if cmd.Process != nil {
+		_ = cmd.Process.Release()
+	}
+
+	// Long enough for the HTTP response to reach the UI so it can show
+	// "installing", short enough that the installer isn't left waiting.
+	go func() {
+		time.Sleep(1200 * time.Millisecond)
+		os.Exit(0)
+	}()
+	return nil
 }

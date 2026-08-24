@@ -31,9 +31,10 @@ type ReuseStatus struct {
 }
 
 type Server struct {
-	store *Store
-	app   *App
-	port  int
+	store   *Store
+	app     *App
+	updater *Updater
+	port    int
 
 	// Buffered so a Reuse click doesn't block if the extension happens to
 	// be between long-polls; capacity 1 because only the most recent
@@ -236,6 +237,7 @@ func (s *Server) routes() http.Handler {
 				Favorite: q.Get("favorite") == "true",
 				Pinned:   q.Get("pinned") == "true",
 				Folder:   q.Get("folder"),
+				Color:    q.Get("color"),
 				Sort:     q.Get("sort"),
 				Limit:    limit,
 				Offset:   offset,
@@ -369,6 +371,18 @@ func (s *Server) routes() http.Handler {
 		}
 	})
 
+	// Re-run explicit-content detection over the whole library. The UI
+	// calls this when the setting is toggled, so the choice applies to
+	// images saved before the feature existed.
+	mux.HandleFunc("/api/nsfw/rescan", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeErr(w, 405, "Method not allowed")
+			return
+		}
+		changed := s.store.RescanNSFW()
+		writeJSON(w, 200, map[string]any{"ok": true, "changed": changed})
+	})
+
 	// Where the library lives on disk. The UI shows this so it's obvious
 	// the images are real files, not something locked inside the app.
 	mux.HandleFunc("/api/storage", func(w http.ResponseWriter, r *http.Request) {
@@ -382,13 +396,14 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/folders", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			writeJSON(w, 200, s.store.Folders())
+			writeJSON(w, 200, s.store.FolderTree())
 		case http.MethodPost:
 			var body struct {
-				Name string `json:"name"`
+				Name   string `json:"name"`
+				Parent string `json:"parentId"`
 			}
 			json.NewDecoder(r.Body).Decode(&body)
-			f, err := s.store.CreateFolder(body.Name)
+			f, err := s.store.CreateFolderIn(body.Name, body.Parent)
 			if err != nil {
 				writeErr(w, 400, err.Error())
 				return
@@ -399,17 +414,197 @@ func (s *Server) routes() http.Handler {
 		}
 	})
 
-	mux.HandleFunc("/api/folders/", func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimPrefix(r.URL.Path, "/api/folders/")
-		if r.Method != http.MethodDelete {
+	// Folder tags in use - plain words, for searching and grouping.
+	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, s.store.TagsInUse())
+	})
+
+	// Colour labels: which colours are in use, how many images carry each,
+	// and the names the user has given them.
+	mux.HandleFunc("/api/colors", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, 200, map[string]any{
+				"names":  s.store.ColorLabels(),
+				"counts": s.store.ColorCounts(),
+			})
+		case http.MethodPost:
+			var body struct {
+				Color string `json:"color"`
+				Name  string `json:"name"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeErr(w, 400, "Invalid JSON")
+				return
+			}
+			s.store.SetColorLabelName(body.Color, body.Name)
+			writeJSON(w, 200, map[string]any{
+				"names":  s.store.ColorLabels(),
+				"counts": s.store.ColorCounts(),
+			})
+		default:
 			writeErr(w, 405, "Method not allowed")
-			return
 		}
-		if !s.store.DeleteFolder(id) {
+	})
+
+	mux.HandleFunc("/api/folders/", func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/api/folders/")
+		parts := strings.SplitN(rest, "/", 2)
+		id := parts[0]
+		if id == "" {
 			writeErr(w, 404, "Not found")
 			return
 		}
-		w.WriteHeader(204)
+		action := ""
+		if len(parts) == 2 {
+			action = parts[1]
+		}
+
+		switch {
+		case r.Method == http.MethodDelete:
+			if !s.store.DeleteFolderTree(id) {
+				writeErr(w, 404, "Not found")
+				return
+			}
+			w.WriteHeader(204)
+
+		case r.Method == http.MethodPatch && action == "":
+			var body struct {
+				Name *string   `json:"name"`
+				Tags *[]string `json:"tags"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeErr(w, 400, "Invalid JSON")
+				return
+			}
+			if body.Name != nil {
+				if err := s.store.RenameFolder(id, *body.Name); err != nil {
+					writeErr(w, 400, err.Error())
+					return
+				}
+			}
+			if body.Tags != nil {
+				if err := s.store.SetFolderTags(id, *body.Tags); err != nil {
+					writeErr(w, 400, err.Error())
+					return
+				}
+			}
+			writeJSON(w, 200, s.store.FolderTree())
+
+		case r.Method == http.MethodPost && action == "move":
+			var body struct {
+				Parent string `json:"parentId"`
+				Index  int    `json:"index"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeErr(w, 400, "Invalid JSON")
+				return
+			}
+			if err := s.store.MoveFolder(id, body.Parent, body.Index); err != nil {
+				writeErr(w, 400, err.Error())
+				return
+			}
+			writeJSON(w, 200, s.store.FolderTree())
+
+		default:
+			writeErr(w, 405, "Method not allowed")
+		}
+	})
+
+	// --- undo / redo ------------------------------------------------------
+	mux.HandleFunc("/api/undo", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJSON(w, 200, s.store.UndoState())
+			return
+		}
+		label, ok := s.store.Undo()
+		writeJSON(w, 200, map[string]any{"ok": ok, "label": label, "state": s.store.UndoState()})
+	})
+
+	mux.HandleFunc("/api/redo", func(w http.ResponseWriter, r *http.Request) {
+		label, ok := s.store.Redo()
+		writeJSON(w, 200, map[string]any{"ok": ok, "label": label, "state": s.store.UndoState()})
+	})
+
+	// --- updates ----------------------------------------------------------
+	//
+	// Checking and downloading run in the background and report through
+	// /api/update/state, which the UI polls only while something is in
+	// flight. Holding the HTTP request open for a multi-megabyte download
+	// would leave the window looking hung.
+
+	mux.HandleFunc("/api/update/state", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, map[string]any{
+			"version":  appVersion,
+			"progress": s.updater.Progress(),
+			"repo":     "https://github.com/" + updateRepo,
+		})
+	})
+
+	// Called once when the window loads. It answers whether this is the
+	// first open of the day - the moment the prompt is meant to appear -
+	// and marks the day as checked so it doesn't nag on every reopen.
+	mux.HandleFunc("/api/update/daily", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeErr(w, 405, "Method not allowed")
+			return
+		}
+		set := s.store.Settings()
+		day := today()
+		first := !s.store.CheckedUpdatesToday(day)
+		// The day is marked from inside the check, so a failed one doesn't
+		// use it up and hide a real update until tomorrow.
+		mark := func(rel *Release) { s.store.MarkUpdateChecked(day) }
+		if first && set.AutoUpdate {
+			// Opted in: don't ask, just do it.
+			s.store.MarkUpdateChecked(day)
+			s.updater.AutoRun()
+		} else if first {
+			s.updater.CheckAsync(mark)
+		}
+		writeJSON(w, 200, map[string]any{
+			"first":      first,
+			"autoUpdate": set.AutoUpdate,
+		})
+	})
+
+	mux.HandleFunc("/api/update/check", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeErr(w, 405, "Method not allowed")
+			return
+		}
+		started := s.updater.CheckAsync(nil)
+		writeJSON(w, 200, map[string]any{"started": started, "progress": s.updater.Progress()})
+	})
+
+	mux.HandleFunc("/api/update/download", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeErr(w, 405, "Method not allowed")
+			return
+		}
+		started := s.updater.DownloadAsync(nil)
+		writeJSON(w, 200, map[string]any{"started": started, "progress": s.updater.Progress()})
+	})
+
+	mux.HandleFunc("/api/update/install", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeErr(w, 405, "Method not allowed")
+			return
+		}
+		if err := s.updater.Install(); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		// The app exits a moment after this returns, so this response is
+		// the last thing the UI will hear from it.
+		writeJSON(w, 200, map[string]bool{"ok": true})
+	})
+
+	// The changelog left behind by an update that has since been installed.
+	// Reading it clears it, so the welcome screen appears exactly once.
+	mux.HandleFunc("/api/update/welcome", func(w http.ResponseWriter, r *http.Request) {
+		rel := s.updater.TakePending()
+		writeJSON(w, 200, map[string]any{"release": rel})
 	})
 
 	// --- static UI --------------------------------------------------------

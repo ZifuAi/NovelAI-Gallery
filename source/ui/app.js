@@ -33,6 +33,30 @@ const CAPTURE_MODES = [
 
 const LAYOUTS = ['grid', 'justified', 'waterfall', 'list'];
 
+const SORTS = [
+  ['newest', 'Newest first'],
+  ['oldest', 'Oldest first'],
+  ['prompt', 'Prompt A–Z'],
+  ['model', 'Model A–Z'],
+  ['largest', 'Largest first'],
+  ['smallest', 'Smallest first'],
+];
+
+// Colour labels for images. Eight is enough to be useful and few enough
+// to tell apart at thumbnail size.
+const LABEL_COLORS = [
+  ['#ff6b6b', 'Red'], ['#ffa94d', 'Orange'], ['#ffd43b', 'Yellow'],
+  ['#51cf66', 'Green'], ['#4dabf7', 'Blue'], ['#b197fc', 'Purple'],
+  ['#f783ac', 'Pink'], ['#868e96', 'Grey'],
+];
+
+function colorLabelName(hex) {
+  const custom = state.colorNames[(hex || '').toLowerCase()];
+  if (custom) return custom;
+  const known = LABEL_COLORS.find(([h]) => h === hex);
+  return known ? known[1] : 'Colour';
+}
+
 const META_VIEWS = [
   {
     id: 'tags',
@@ -58,11 +82,20 @@ const state = {
   selected: null,    // shown in the inspector panel
   loading: false,
   settings: {
-    theme: 'midnight', cardSize: 190, inspectorOpen: true,
-    captureMode: 'generated', layout: 'grid', sort: 'newest',
-    metaView: 'tags', interceptDownloads: false,
+    theme: 'midnight', cardSize: 190, inspectorOpen: false,
+    captureMode: 'generated', layout: 'waterfall', sort: 'newest',
+    metaView: 'tags', interceptDownloads: false, flagNsfw: true, sidebarWidth: 232,
+    autoUpdate: false,
   },
+  appVersion: '',    // reported by the running binary
   collapsed: {},     // section id -> true when collapsed
+  revealed: new Set(),   // NSFW images un-blurred for this session only
+  folderClosed: new Set(),  // collapsed branches of the folder tree
+  tags: [],
+  colorNames: {},
+  colorCounts: {},
+  color: null,           // active colour-label filter
+  undo: { canUndo: false, canRedo: false },
   selection: new Set(),  // ids ticked in multi-select mode
   selectMode: false,
   anchorId: null,    // for shift-click ranges
@@ -77,17 +110,26 @@ const el = {};
   'favBtn', 'pinBtn', 'closeBtn', 'toast', 'zoom', 'inspector', 'inspectorBody',
   'inspectorToggle', 'inspectorClose', 'settingsBtn', 'settingsModal', 'settingsClose',
   'darkThemes', 'lightThemes', 'captureModes', 'metaViews', 'interceptSwitch',
+  'nsfwSwitch', 'settingsTabs', 'tagManager', 'aboutVersion', 'checkUpdateBtn',
+  'updateStatus', 'autoUpdateSwitch', 'aboutRepo',
+  'updateToast', 'updateToastTitle', 'updateToastBody', 'updateToastClose',
+  'updateToastLater', 'updateToastGo',
+  'updateModal', 'updateStage', 'updateSpinner', 'updateHeadline', 'updateSub',
+  'updateBarFill', 'updateActions', 'updateCancel',
+  'welcomeModal', 'welcomeTitle', 'welcomeSub', 'welcomeBody', 'welcomeLink', 'welcomeDone',
   'onboardModal', 'onboardBody', 'onboardDots', 'onboardBack', 'onboardNext',
   'onboardSkip', 'onboardStepLabel', 'ctxMenu',
+  'folderRootDrop', 'sidebarResizer',
   'importBtn', 'importInput', 'dropzone',
   'extModal', 'extBody', 'extClose', 'setupExtBtn', 'extStatus', 'extDot', 'extStatusText',
-  'sortSelect', 'layoutSwitch', 'selectBtn', 'deleteBtn', 'expandBtn',
+  'viewMenuBtn', 'viewMenu', 'viewMenuLabel', 'viewMenuDot', 'layoutSwitch', 'selectBtn', 'deleteBtn', 'expandBtn',
   'zoomView', 'zoomCanvas', 'zoomImg', 'zoomBack', 'zoomIn', 'zoomOut',
   'zoomLevel', 'zoomName', 'zoomHint',
   'bulkbar', 'bulkCount', 'bulkSelectAll', 'bulkPin', 'bulkFav',
   'bulkFolderBtn', 'bulkFolderMenu', 'bulkDelete', 'bulkClose',
   'clearGalleryBtn', 'clearCount',
   'confirmModal', 'confirmTitle', 'confirmBody', 'confirmOk', 'confirmCancel',
+  'askModal', 'askTitle', 'askSub', 'askInput', 'askError', 'askOk', 'askCancel',
 ].forEach((id) => { el[id] = $(id); });
 el.app = document.getElementById('app');
 
@@ -112,12 +154,21 @@ async function loadSettings() {
   } catch (e) {
     /* fall back to defaults */
   }
+  // Which build this is, straight from the running binary rather than a
+  // number hardcoded in two places that can drift apart.
+  try {
+    const h = await fetch('/api/health').then((r) => r.json());
+    state.appVersion = h.version || '';
+  } catch (e) { /* the About tab shows a dash */ }
   applySettings();
 }
 
 function applySettings() {
   document.documentElement.setAttribute('data-theme', state.settings.theme);
   document.documentElement.style.setProperty('--card-size', `${state.settings.cardSize}px`);
+  if (state.settings.sidebarWidth) {
+    document.documentElement.style.setProperty('--sidebar-w', `${state.settings.sidebarWidth}px`);
+  }
   el.zoom.value = state.settings.cardSize;
   el.app.classList.toggle('inspector-open', !!state.settings.inspectorOpen);
   el.inspectorToggle.classList.toggle('active', !!state.settings.inspectorOpen);
@@ -127,7 +178,7 @@ function applySettings() {
     b.classList.toggle('active', b.dataset.layout === state.settings.layout);
   });
   el.app.dataset.layout = state.settings.layout;
-  el.sortSelect.value = state.settings.sort || 'newest';
+
   // The zoom slider means "row height" or "column width" depending on the
   // layout, and nothing at all in list view.
   el.zoom.parentElement.classList.toggle('disabled', state.settings.layout === 'list');
@@ -194,6 +245,80 @@ function confirmDialog({ title, body, confirmLabel = 'Delete' }) {
     el.confirmOk.addEventListener('click', ok);
     el.confirmCancel.addEventListener('click', cancel);
     el.confirmModal.addEventListener('click', backdrop);
+    document.addEventListener('keydown', key, true);
+  });
+}
+
+/**
+ * Ask for a line of text, in the app's own dialog rather than the browser's.
+ *
+ * window.prompt draws an operating-system box that ignores the theme, sits
+ * wherever Windows feels like putting it, and has no room for a hint or for
+ * saying why a name was refused. This one can do all three, so a rejected
+ * name is corrected in place instead of throwing the typing away.
+ *
+ * `submit` may return an error string to keep the dialog open with that
+ * message shown. Resolves with the value, or null if it was cancelled.
+ */
+function askText({ title, sub = '', value = '', placeholder = '', okLabel = 'Create', submit }) {
+  return new Promise((resolve) => {
+    el.askTitle.textContent = title;
+    el.askSub.textContent = sub;
+    el.askSub.hidden = !sub;
+    el.askInput.value = value;
+    el.askInput.placeholder = placeholder;
+    el.askOk.textContent = okLabel;
+    el.askError.hidden = true;
+    el.askError.textContent = '';
+    el.askModal.hidden = false;
+    el.askInput.focus();
+    el.askInput.select();
+
+    let busy = false;
+    const close = (answer) => {
+      el.askModal.hidden = true;
+      el.askOk.removeEventListener('click', ok);
+      el.askCancel.removeEventListener('click', cancel);
+      el.askModal.removeEventListener('mousedown', backdrop);
+      el.askInput.removeEventListener('input', clearError);
+      document.removeEventListener('keydown', key, true);
+      resolve(answer);
+    };
+
+    const ok = async () => {
+      if (busy) return;
+      const text = el.askInput.value.trim();
+      if (!text && okLabel !== 'Save') { el.askInput.focus(); return; }
+      if (!submit) return close(text);
+
+      busy = true;
+      el.askOk.disabled = true;
+      const err = await submit(text);
+      busy = false;
+      el.askOk.disabled = false;
+      if (err) {
+        // Keep what they typed on screen so it can be edited, rather than
+        // closing and making them start again.
+        el.askError.textContent = err;
+        el.askError.hidden = false;
+        el.askInput.focus();
+        el.askInput.select();
+        return;
+      }
+      close(text);
+    };
+    const cancel = () => close(null);
+    const backdrop = (e) => { if (e.target === el.askModal) close(null); };
+    const clearError = () => { el.askError.hidden = true; };
+    const key = (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(null); }
+      if (e.key === 'Enter') { e.stopPropagation(); e.preventDefault(); ok(); }
+    };
+
+    el.askOk.addEventListener('click', ok);
+    el.askCancel.addEventListener('click', cancel);
+    el.askModal.addEventListener('mousedown', backdrop);
+    el.askInput.addEventListener('input', clearError);
     document.addEventListener('keydown', key, true);
   });
 }
@@ -303,6 +428,86 @@ function renderInterceptSwitch(container) {
   });
 }
 
+function renderNSFWSwitch(container) {
+  if (!container) return;
+  container.innerHTML = `
+    <label class="switch-row">
+      <input type="checkbox" class="switch-input"${state.settings.flagNsfw ? ' checked' : ''} />
+      <span class="switch-track"><span class="switch-knob"></span></span>
+      <span class="switch-text">
+        <span class="switch-title">Blur explicit images in the gallery</span>
+        <span class="switch-desc">
+          Images whose prompt describes explicit content are covered with a
+          Reveal button. Ordinary anatomy — "large breasts" and the like — is
+          not flagged, and undesired content is never read as evidence.
+          Opening an image always shows it. Turning this on or off re-checks
+          your whole library.
+        </span>
+      </span>
+    </label>`;
+  const input = container.querySelector('.switch-input');
+  input.addEventListener('change', async () => {
+    const on = input.checked;
+    saveSettings({ flagNsfw: on });
+    input.disabled = true;
+    try {
+      const res = await fetch('/api/nsfw/rescan', { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      toast(on
+        ? `Explicit images will be blurred${body.changed ? ` — ${body.changed} newly flagged` : ''}`
+        : 'Nothing will be flagged');
+    } catch (e) {
+      toast('Could not re-check the library');
+    }
+    input.disabled = false;
+    state.revealed.clear();
+    await load({ reset: true });
+  });
+}
+
+el.settingsTabs.addEventListener('click', (e) => {
+  const tab = e.target.closest('.settings-tab');
+  if (!tab) return;
+  el.settingsTabs.querySelectorAll('.settings-tab').forEach((t) =>
+    t.classList.toggle('active', t === tab));
+  document.querySelectorAll('.settings-pane').forEach((pane) =>
+    pane.classList.toggle('active', pane.dataset.pane === tab.dataset.tab));
+  document.querySelector('.settings-body').scrollTop = 0;
+});
+
+/**
+ * Names for the colour labels. A swatch that means "needs work" is worth
+ * more than one that means "red", and the name is searchable.
+ */
+function renderTagManager(container) {
+  if (!container) return;
+  container.innerHTML = `
+    <div class="hint-inline">
+      Give the colours names that mean something to you. Right-click any image
+      to label it, then filter by colour from the sort menu.
+    </div>
+    ${LABEL_COLORS.map(([hex, fallback]) => `
+      <div class="label-row">
+        <span class="label-swatch" style="background:${hex}"></span>
+        <input class="label-input" data-color="${hex}" value="${esc(state.colorNames[hex.toLowerCase()] || '')}"
+          placeholder="${esc(fallback)}" spellcheck="false" />
+        <span class="label-count">${state.colorCounts[hex.toLowerCase()] || 0}</span>
+      </div>`).join('')}`;
+
+  container.querySelectorAll('.label-input').forEach((input) => {
+    const save = async () => {
+      await fetch('/api/colors', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ color: input.dataset.color, name: input.value }),
+      }).catch(() => {});
+      await loadColorLabels();
+      renderViewMenu();
+    };
+    input.addEventListener('change', save);
+    input.addEventListener('blur', save);
+  });
+}
+
 function renderSettings() {
   renderThemePicker(el.darkThemes, el.lightThemes, (b) => {
     renderSettings();
@@ -312,6 +517,9 @@ function renderSettings() {
   renderCaptureModes(el.captureModes, () =>
     toast('Capture mode updated — the extension picks this up within a minute.'));
   renderInterceptSwitch(el.interceptSwitch);
+  renderNSFWSwitch(el.nsfwSwitch);
+  renderTagManager(el.tagManager);
+  renderAbout();
 }
 
 // ---------------------------------------------------------------- storage
@@ -634,6 +842,7 @@ function buildParams() {
   if (state.view === 'favorites') p.set('favorite', 'true');
   if (state.view === 'pinned') p.set('pinned', 'true');
   if (state.folderId) p.set('folder', state.folderId);
+  if (state.color) p.set('color', state.color);
   if (state.settings.sort) p.set('sort', state.settings.sort);
   return p;
 }
@@ -788,8 +997,7 @@ function render() {
     if (node) {
       // Only touch the DOM if the badge state actually changed; the <img>
       // itself is deliberately left untouched.
-      const wantBadges = `${record.pinned ? 'p' : ''}${record.favorite ? 'f' : ''}`;
-      if (node.dataset.badges !== wantBadges) {
+      if (node.dataset.badges !== badgeKey(record)) {
         const fresh = card(record);
         node.replaceWith(fresh);
         node = fresh;
@@ -825,6 +1033,37 @@ function render() {
   el.countPill.textContent = `${state.total} image${state.total === 1 ? '' : 's'}`;
 }
 
+/**
+ * Whether an image should be covered in the gallery.
+ *
+ * The manual mark is the user's answer and beats the classifier's guess;
+ * the master setting beats both, so turning it off really does mean
+ * nothing is flagged.
+ */
+function isNSFW(record) {
+  if (!state.settings.flagNsfw) return false;
+  return record.nsfwManual !== undefined && record.nsfwManual !== null
+    ? !!record.nsfwManual
+    : !!record.nsfwAuto;
+}
+
+/**
+ * Everything about a card that, if it changes, means the card has to be
+ * rebuilt. This has to be one function: it was written out twice, and the
+ * two copies drifted the moment NSFW covers were added - the builder
+ * stamped a flag the reconciler didn't know to look for, so flagged cards
+ * were rebuilt on every refresh and never updated when the flag changed.
+ */
+function badgeKey(record) {
+  return [
+    record.pinned ? 'p' : '',
+    record.favorite ? 'f' : '',
+    record.color || '',
+    isNSFW(record) ? 'n' : '',
+    state.revealed.has(record.id) ? 'r' : '',
+  ].join('');
+}
+
 const ICONS = {
   pin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6l-1 6 4 3v2H6v-2l4-3z"></path><path d="M12 15v5"></path></svg>',
   star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3.6l2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.6 9.7l5.8-.8z"></path></svg>',
@@ -850,15 +1089,65 @@ function card(record) {
   const div = document.createElement('div');
   div.className = 'card';
   div.dataset.id = record.id;
-  div.dataset.badges = `${record.pinned ? 'p' : ''}${record.favorite ? 'f' : ''}`;
+  div.dataset.badges = badgeKey(record);
   div.draggable = true;
+
+  const nsfw = isNSFW(record) && !state.revealed.has(record.id);
+  div.classList.toggle('nsfw', nsfw);
 
   const img = document.createElement('img');
   img.loading = 'lazy';
   img.draggable = false; // the card owns the drag, not the bare image
   img.src = `/api/images/${record.id}/file`;
-  img.alt = record.meta?.prompt?.slice(0, 60) || '';
+  img.alt = nsfw ? 'Explicit image, hidden' : (record.meta?.prompt?.slice(0, 60) || '');
   div.appendChild(img);
+
+  // Swapping the card for a freshly built one keeps every other piece of
+  // its state - position, selection, drag wiring - in one place instead of
+  // patching classes by hand on each toggle.
+  const reswap = () => {
+    const fresh = card(record);
+    fresh.setAttribute('style', div.getAttribute('style') || '');
+    fresh.classList.toggle('selected', state.selection.has(record.id));
+    div.replaceWith(fresh);
+  };
+
+  if (nsfw) {
+    const cover = document.createElement('div');
+    cover.className = 'nsfw-cover';
+    cover.innerHTML = `
+      <span class="nsfw-tag">NSFW</span>
+      <button class="nsfw-reveal">Reveal</button>`;
+    cover.querySelector('.nsfw-reveal').addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      state.revealed.add(record.id);
+      reswap();
+    });
+    div.appendChild(cover);
+  } else if (isNSFW(record)) {
+    // Revealed, and still flagged: offer the way back. Revealing to check
+    // one image shouldn't mean it stays uncovered for the rest of the
+    // session with no way to put the cover back short of a reload.
+    const hide = document.createElement('button');
+    hide.className = 'nsfw-hide';
+    hide.title = 'Hide this again';
+    hide.setAttribute('aria-label', 'Hide this again');
+    hide.innerHTML = `<svg viewBox="0 0 20 20" width="13" height="13" fill="none"
+      stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 3l14 14" />
+      <path d="M8.2 4.4A7.4 7.4 0 0 1 10 4.2c4 0 6.7 3 7.4 4.3.2.3.2.7 0 1a12 12 0 0 1-2.3 2.7" />
+      <path d="M13.3 13.3A7.7 7.7 0 0 1 10 14.2c-4 0-6.7-3-7.4-4.3a1 1 0 0 1 0-1 12.6 12.6 0 0 1 2.8-3.1" />
+      <path d="M8.6 8.7a2 2 0 0 0 2.7 2.7" />
+    </svg>`;
+    hide.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      state.revealed.delete(record.id);
+      reswap();
+    });
+    div.appendChild(hide);
+  }
 
   const overlay = document.createElement('div');
   overlay.className = 'card-overlay';
@@ -888,6 +1177,14 @@ function card(record) {
   info.appendChild(infoPrompt);
   info.appendChild(infoMeta);
   div.appendChild(info);
+
+  if (record.color) {
+    const dot = document.createElement('span');
+    dot.className = 'card-color';
+    dot.style.background = record.color;
+    dot.title = colorLabelName(record.color);
+    div.appendChild(dot);
+  }
 
   if (record.favorite || record.pinned) {
     const badges = document.createElement('div');
@@ -1182,6 +1479,7 @@ async function deleteImages(ids, { skipConfirm } = {}) {
 
   render();
   refreshCounts();
+  refreshUndoState();
   toast(ids.length === 1 ? 'Image deleted' : `${ids.length} images deleted`);
 }
 
@@ -1299,6 +1597,12 @@ const CTX_ICONS = {
   explorer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h3.5l2 2.5H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="M12 15V9.5"></path><path d="M9.5 12L12 9.5l2.5 2.5"></path></svg>',
   import: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"></path><path d="M8 8l4-4 4 4"></path><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"></path></svg>',
   refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path></svg>',
+  eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"></path><circle cx="12" cy="12" r="2.6"></circle></svg>',
+  undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 1 2.64 6.36"></path><path d="M3 3v6h6"></path></svg>',
+  redo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 0-2.64 6.36"></path><path d="M21 3v6h-6"></path></svg>',
+  rename: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"></path><path d="M14 6l4 4"></path></svg>',
+  tag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 12V5a2 2 0 0 1 2-2h7l9 9-9 9z"></path><circle cx="7.5" cy="7.5" r="1.4"></circle></svg>',
+  palette: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18c1.4 0 2-1 2-1.8 0-1.6-1.6-1.8-1.6-3 0-1 .8-1.7 1.9-1.7H16a5 5 0 0 0 5-5c0-3.6-4-6.5-9-6.5z"></path><circle cx="8" cy="10" r="1.2"></circle><circle cx="12" cy="7.5" r="1.2"></circle></svg>',
   trash: ICONS.trash,
   star: ICONS.star,
   pin: ICONS.pin,
@@ -1323,9 +1627,7 @@ function folderSubmenu(ids) {
       label: 'New folder…',
       icon: '+',
       action: async () => {
-        const name = prompt('Folder name');
-        if (!name || !name.trim()) return;
-        const folder = await createFolder(name);
+        const folder = await createFolder();
         if (folder) moveToFolder(ids, folder.id, folder.name);
       },
     });
@@ -1404,6 +1706,47 @@ function imageMenu(ids) {
     });
   }
 
+  items.push({
+    label: 'Colour label',
+    icon: CTX_ICONS.palette,
+    submenu: () => ({
+      title: many ? `Colour ${ids.length} images` : 'Colour label',
+      items: [
+        { label: 'Back', back: true, icon: '‹', submenu: () => imageMenu(ids) },
+        ...LABEL_COLORS.map(([hex]) => ({
+          label: colorLabelName(hex),
+          icon: `<span class="ctx-swatch" style="background:${hex}"></span>`,
+          action: () => setColorLabel(ids, hex),
+        })),
+        { label: 'No colour', action: () => setColorLabel(ids, '') },
+      ],
+    }),
+  });
+
+  if (state.settings.flagNsfw) {
+    const allFlagged = ids.every((id) => {
+      const rec = state.items.find((r) => r.id === id);
+      return rec && isNSFW(rec);
+    });
+    items.push('sep');
+    items.push({
+      label: allFlagged ? `Remove NSFW mark` : `Mark ${noun} as NSFW`,
+      icon: CTX_ICONS.eye,
+      action: () => setNSFW(ids, !allFlagged),
+    });
+    const anyManual = ids.some((id) => {
+      const rec = state.items.find((r) => r.id === id);
+      return rec && rec.nsfwManual !== undefined && rec.nsfwManual !== null;
+    });
+    if (anyManual && !many) {
+      items.push({
+        label: 'Reset to automatic',
+        icon: CTX_ICONS.refresh,
+        action: () => setNSFW(ids, null),
+      });
+    }
+  }
+
   items.push('sep');
   items.push({
     label: many ? `Delete ${ids.length} images` : 'Delete image',
@@ -1418,22 +1761,42 @@ function folderRowMenu(folder) {
   return [
     { label: 'Open folder', icon: CTX_ICONS.folder, action: () => selectView('folder', folder.id) },
     'sep',
+    { label: 'Rename…', icon: CTX_ICONS.rename, action: () => renameFolder(folder) },
+    {
+      label: 'New subfolder…',
+      icon: CTX_ICONS.folder,
+      action: () => createFolder(folder.id, folder.name),
+    },
+    { label: 'Tags…', detail: (folder.tags || []).join(', ') || 'none', icon: CTX_ICONS.tag,
+      action: () => editFolderTags(folder) },
+    'sep',
+    {
+      label: 'Move to top level',
+      icon: CTX_ICONS.folder,
+      disabled: !folder.parentId,
+      action: () => moveFolder(folder.id, '', -1),
+    },
+    'sep',
     {
       label: 'Delete folder',
       detail: 'images are kept',
       icon: CTX_ICONS.trash,
       danger: true,
       action: async () => {
+        const kids = state.folders.filter((f) => f.parentId === folder.id).length;
         const ok = await confirmDialog({
           title: `Delete the folder “${folder.name}”?`,
-          body: 'The folder is removed and its images stop being filed under it. The images themselves are not deleted.',
+          body: `The folder${kids ? ` and its ${kids} subfolder${kids === 1 ? '' : 's'}` : ''} is removed and
+                 its images stop being filed under it. The images themselves are not deleted,
+                 and this can be undone.`,
           confirmLabel: 'Delete folder',
         });
         if (!ok) return;
         const res = await fetch(`/api/folders/${folder.id}`, { method: 'DELETE' });
         if (!res.ok) return toast('Could not delete that folder');
         if (state.folderId === folder.id) selectView('all');
-        else loadFolders();
+        else { loadFolders(); load({ reset: true, silent: true }); }
+        refreshUndoState();
         toast('Folder deleted');
       },
     },
@@ -1442,6 +1805,21 @@ function folderRowMenu(folder) {
 
 function galleryMenu() {
   return [
+    {
+      label: state.undo.canUndo ? `Undo ${state.undo.undoLabel.toLowerCase()}` : 'Undo',
+      detail: 'Ctrl+Z',
+      icon: CTX_ICONS.undo,
+      disabled: !state.undo.canUndo,
+      action: () => doUndo(false),
+    },
+    {
+      label: state.undo.canRedo ? `Redo ${state.undo.redoLabel.toLowerCase()}` : 'Redo',
+      detail: 'Ctrl+Y',
+      icon: CTX_ICONS.redo,
+      disabled: !state.undo.canRedo,
+      action: () => doUndo(true),
+    },
+    'sep',
     { label: 'Import images…', icon: CTX_ICONS.import, action: () => el.importInput.click() },
     { label: 'Refresh', icon: CTX_ICONS.refresh, action: () => { load({ reset: true }); loadFolders(); } },
     'sep',
@@ -1458,7 +1836,7 @@ function galleryMenu() {
     {
       label: 'New folder…',
       icon: CTX_ICONS.folder,
-      action: async () => { if (await createFolder(prompt('Folder name') || '')) toast('Folder created'); },
+      action: () => createFolder(),
     },
   ];
 }
@@ -1493,9 +1871,9 @@ document.addEventListener('contextmenu', (e) => {
     return;
   }
 
-  const folderRow = e.target.closest('#folderList .nav-item');
+  const folderRow = e.target.closest('#folderList .folder-row');
   if (folderRow) {
-    const folder = state.folders.find((f) => f.name === folderRow.querySelector('.nav-label')?.textContent);
+    const folder = state.folders.find((f) => f.id === folderRow.dataset.folderId);
     if (folder) {
       e.preventDefault();
       openContextMenu(e.clientX, e.clientY, folderRowMenu(folder), folder.name);
@@ -1626,6 +2004,22 @@ function sectionHtml(section) {
     </div>`;
 }
 
+/** The same collapsible shell the prompt sections use, for anything else. */
+function collapsibleHtml(id, name, tally, body) {
+  const collapsed = isSectionCollapsed(id) ? ' collapsed' : '';
+  return `
+    <div class="section${collapsed}" data-section="${id}">
+      <button class="section-head">
+        <svg class="section-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 6l6 6-6 6"></path>
+        </svg>
+        <span class="section-name">${esc(name)}</span>
+        ${tally ? `<span class="section-tally">${esc(tally)}</span>` : ''}
+      </button>
+      <div class="section-body">${body}</div>
+    </div>`;
+}
+
 function specsHtml(m) {
   const specs = [
     ['Model', m.model], ['Sampler', m.sampler], ['Steps', m.steps], ['Guidance', m.scale],
@@ -1633,13 +2027,10 @@ function specsHtml(m) {
     ['Size', m.width && m.height ? `${m.width} × ${m.height}` : null],
   ].filter(([, v]) => v !== null && v !== undefined && v !== '');
   if (!specs.length) return '';
-  return `
-    <div class="field">
-      <div class="field-label">Generation</div>
-      <div class="spec-grid">
-        ${specs.map(([k, v]) => `<div class="spec"><div class="spec-key">${esc(k)}</div><div class="spec-val">${esc(v)}</div></div>`).join('')}
-      </div>
-    </div>`;
+  return collapsibleHtml('generation', 'Generation', specs.length, `
+    <div class="spec-grid">
+      ${specs.map(([k, v]) => `<div class="spec"><div class="spec-key">${esc(k)}</div><div class="spec-val">${esc(v)}</div></div>`).join('')}
+    </div>`);
 }
 
 /**
@@ -1670,18 +2061,38 @@ function renderMetaInto(container, record, { showReuse } = {}) {
         <button class="btn primary" id="reuseBtn">Reuse prompt in NovelAI</button>
         <button class="btn" id="revealBtn" title="Show this file in File Explorer">Open in folder</button>
       </div>
+      <div class="color-row">
+        <span class="color-row-label">Colour</span>
+        ${LABEL_COLORS.map(([hex]) => `
+          <button class="color-pick${record.color === hex ? ' active' : ''}" data-color="${hex}"
+            style="background:${hex}" title="${esc(colorLabelName(hex))}"></button>`).join('')}
+        <button class="color-pick none${!record.color ? ' active' : ''}" data-color="" title="No colour"></button>
+      </div>
+      <label class="nsfw-row">
+        <input type="checkbox" class="switch-input" id="nsfwToggle"${isNSFW(record) ? ' checked' : ''} />
+        <span class="switch-track"><span class="switch-knob"></span></span>
+        <span class="nsfw-row-text">
+          Marked as NSFW
+          <span class="nsfw-row-sub">${state.settings.flagNsfw
+            ? (record.nsfwManual === undefined || record.nsfwManual === null
+                ? 'Set automatically from the prompt'
+                : 'Set by you')
+            : 'Flagging is off in Settings'}</span>
+        </span>
+      </label>
       <div class="hint" id="reuseHint">Hands this image to an open NovelAI tab, the same as dragging the file in — NovelAI reads the prompt and settings back out of it.</div>` : ''}
     ${sections.map(raw ? rawSectionHtml : sectionHtml).join('')}
     ${specsHtml(m)}
-    <div class="field">
-      <div class="field-label">Added</div>
-      <div class="spec-val">${esc(new Date(record.addedAt).toLocaleString())}</div>
-    </div>
-    ${imagePathOf(record) ? `
+    ${collapsibleHtml('file', 'File', '', `
       <div class="field">
-        <div class="field-label">File on disk</div>
-        <div class="file-path" id="filePath" title="${esc(imagePathOf(record))}">${esc(imagePathOf(record))}</div>
-      </div>` : ''}`;
+        <div class="field-label">Added</div>
+        <div class="spec-val">${esc(new Date(record.addedAt).toLocaleString())}</div>
+      </div>
+      ${imagePathOf(record) ? `
+        <div class="field">
+          <div class="field-label">On disk</div>
+          <div class="file-path" id="filePath" title="${esc(imagePathOf(record))}">${esc(imagePathOf(record))}</div>
+        </div>` : ''}`)}`;
 
   // Collapse / expand
   container.querySelectorAll('.section-head').forEach((head) => {
@@ -1728,6 +2139,16 @@ function renderMetaInto(container, record, { showReuse } = {}) {
 
   const reuseBtn = container.querySelector('#reuseBtn');
   if (reuseBtn) reuseBtn.addEventListener('click', () => reusePrompt(record, container));
+
+  container.querySelectorAll('.color-pick').forEach((b) => {
+    b.addEventListener('click', () => setColorLabel(record.id, b.dataset.color));
+  });
+
+  const nsfwToggle = container.querySelector('#nsfwToggle');
+  if (nsfwToggle) {
+    nsfwToggle.disabled = !state.settings.flagNsfw;
+    nsfwToggle.addEventListener('change', () => setNSFW(record.id, nsfwToggle.checked));
+  }
 
   const revealBtn = container.querySelector('#revealBtn');
   if (revealBtn) revealBtn.addEventListener('click', () => revealImage(record, revealBtn));
@@ -2060,6 +2481,49 @@ function renderDetails() {
   renderMetaInto(el.detailsBody, r, { showReuse: true });
 }
 
+/**
+ * Set or clear a manual NSFW mark. Passing null hands the image back to
+ * the classifier, which is what "reset" in the menu does.
+ */
+async function setNSFW(ids, value) {
+  const list = Array.isArray(ids) ? ids : [ids];
+  if (!list.length) return;
+  try {
+    if (list.length === 1) {
+      const body = value === null ? { nsfwClear: true } : { nsfw: value };
+      const res = await fetch(`/api/images/${list[0]}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const updated = await res.json();
+      const rec = state.items.find((r) => r.id === list[0]);
+      if (rec) {
+        rec.nsfwManual = updated.nsfwManual;
+        rec.nsfwAuto = updated.nsfwAuto;
+      }
+    } else {
+      await bulkRequest({ action: 'update', ids: list, nsfw: value });
+      list.forEach((id) => {
+        const rec = state.items.find((r) => r.id === id);
+        if (rec) rec.nsfwManual = value;
+      });
+    }
+  } catch (e) {
+    return toast('Could not change that');
+  }
+
+  // Marking something explicit should hide it again straight away.
+  if (value) list.forEach((id) => state.revealed.delete(id));
+
+  render();
+  if (state.current && list.includes(state.current.id)) renderDetails();
+  toast(value === null
+    ? 'Back to automatic'
+    : (value ? 'Marked as NSFW' : 'No longer marked as NSFW'));
+}
+
 async function setFlag(record, fieldName, value) {
   const r = record;
   if (!r) return;
@@ -2173,54 +2637,432 @@ window.addEventListener('drop', (e) => {
 
 // ---------------------------------------------------------------- folders
 
+/* ---------------------------------------------------------------- undo
+
+   The stack lives in the app, not here, so every window and every route
+   into a change shares one history. The UI only needs to ask what the next
+   step would be, so it can label the menu item honestly rather than
+   offering "Undo" for nothing.
+*/
+
+async function refreshUndoState() {
+  try {
+    state.undo = await fetch('/api/undo').then((r) => r.json());
+  } catch (e) {
+    state.undo = { canUndo: false, canRedo: false };
+  }
+}
+
+async function doUndo(redo = false) {
+  try {
+    const res = await fetch(redo ? '/api/redo' : '/api/undo', { method: 'POST' });
+    const body = await res.json();
+    if (!body.ok) {
+      toast(redo ? 'Nothing to redo' : 'Nothing to undo');
+      return;
+    }
+    state.undo = body.state;
+    state.revealed.clear();
+    await Promise.all([load({ reset: true, silent: true }), loadFolders()]);
+    refreshCounts();
+    if (state.current && !state.items.some((r) => r.id === state.current.id)) closeViewer();
+    toast(`${redo ? 'Redone' : 'Undone'}: ${body.label}`);
+  } catch (e) {
+    toast('Could not do that');
+  }
+}
+
+/* ---------------------------------------------------------------- folders
+
+   Folders are a tree now: each one knows its parent, so the sidebar is a
+   depth-first walk with indentation. Rows are drop targets twice over -
+   images can be filed into them, and folders themselves can be dragged
+   onto or between them - so the drag handling checks what is being carried
+   before it lights anything up.
+*/
+
+const FOLDER_DRAG = 'application/x-novelai-gallery-folder';
+
+function folderIcon(open, hasKids) {
+  if (!hasKids) {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+      <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2.5H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>`;
+  }
+  return `<svg class="folder-twisty${open ? ' open' : ''}" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 6l6 6-6 6"></path></svg>`;
+}
+
+function isFolderOpen(id) {
+  return !state.folderClosed.has(id);
+}
+
+/** Folders hidden because an ancestor is collapsed. */
+function hiddenByCollapse(node, byId) {
+  let cur = node.parentId;
+  while (cur) {
+    if (!isFolderOpen(cur)) return true;
+    cur = byId.get(cur)?.parentId || '';
+  }
+  return false;
+}
+
 async function loadFolders() {
   try {
     const folders = await fetch('/api/folders').then((r) => r.json());
     state.folders = folders;
-    el.folderList.innerHTML = '';
-    if (folders.length === 0) {
-      el.folderList.innerHTML =
-        '<div class="empty-note">No folders yet. Make one, then drag images onto it.</div>';
-      return;
-    }
-    folders.forEach((f) => {
-      const btn = document.createElement('button');
-      btn.className = `nav-item${state.folderId === f.id ? ' active' : ''}`;
-      btn.innerHTML = `
-        <span class="nav-icon">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
-            <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2.5H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-          </svg>
-        </span>
-        <span class="nav-label">${esc(f.name)}</span>`;
-      btn.addEventListener('click', () => selectView('folder', f.id));
-      // Dropping images on a folder files them there.
-      wireImageDropTarget(btn, (ids) => moveToFolder(ids, f.id, f.name));
-      el.folderList.appendChild(btn);
-    });
+    renderFolders();
   } catch (e) { /* non-critical */ }
 }
 
-async function createFolder(name) {
-  const res = await fetch('/api/folders', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: name.trim() }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    toast(err.error || 'Could not create folder');
-    return null;
+function renderFolders() {
+  const folders = state.folders || [];
+  el.folderList.innerHTML = '';
+
+  if (folders.length === 0) {
+    el.folderList.innerHTML =
+      '<div class="empty-note">No folders yet. Make one, then drag images onto it.</div>';
+    return;
   }
-  const folder = await res.json();
-  await loadFolders();
-  return folder;
+
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  const hasKids = new Set(folders.map((f) => f.parentId).filter(Boolean));
+
+  folders.forEach((f) => {
+    if (hiddenByCollapse(f, byId)) return;
+
+    const row = document.createElement('div');
+    row.className = `nav-item folder-row${state.folderId === f.id ? ' active' : ''}`;
+    row.dataset.folderId = f.id;
+    row.draggable = true;
+    row.style.paddingLeft = `${10 + f.depth * 14}px`;
+
+    const kids = hasKids.has(f.id);
+    row.innerHTML = `
+      <span class="nav-icon folder-icon${kids ? ' twisty' : ''}">${folderIcon(isFolderOpen(f.id), kids)}</span>
+      <span class="nav-label">${esc(f.name)}</span>
+      ${(f.tags || []).length ? '<span class="tag-mark" title="' + esc((f.tags || []).join(', ')) + '">#</span>' : ''}
+      <span class="nav-count">${f.count || ''}</span>`;
+
+    row.addEventListener('click', (e) => {
+      // The twisty expands; anything else opens the folder.
+      if (kids && e.target.closest('.folder-icon')) {
+        if (isFolderOpen(f.id)) state.folderClosed.add(f.id);
+        else state.folderClosed.delete(f.id);
+        renderFolders();
+        return;
+      }
+      selectView('folder', f.id);
+    });
+
+    // Double-click to rename, the way every file manager does it. The
+    // single clicks that precede it just open the folder first, which is
+    // where you'd want to be anyway.
+    row.addEventListener('dblclick', (e) => {
+      if (kids && e.target.closest('.folder-icon')) return; // that's the twisty
+      e.preventDefault();
+      renameFolder(f);
+    });
+
+    // Images dropped here get filed; folders dropped here get re-parented.
+    wireImageDropTarget(row, (ids) => moveToFolder(ids, f.id, f.name));
+    wireFolderDrag(row, f);
+    el.folderList.appendChild(row);
+  });
 }
 
-el.addFolderBtn.addEventListener('click', async () => {
-  const name = prompt('Folder name');
-  if (!name || !name.trim()) return;
-  if (await createFolder(name)) toast('Folder created');
+/** Dragging a folder: pick it up, and accept other folders being dropped. */
+function wireFolderDrag(row, folder) {
+  row.addEventListener('dragstart', (e) => {
+    e.stopPropagation();
+    try {
+      e.dataTransfer.setData(FOLDER_DRAG, folder.id);
+      e.dataTransfer.setData('text/plain', folder.name);
+    } catch (err) { /* nothing to carry */ }
+    e.dataTransfer.effectAllowed = 'move';
+    row.classList.add('dragging');
+    el.app.classList.add('dragging-folder');
+  });
+
+  row.addEventListener('dragend', () => {
+    row.classList.remove('dragging');
+    el.app.classList.remove('dragging-folder');
+    document.querySelectorAll('.drop-into, .drop-above, .drop-below')
+      .forEach((n) => n.classList.remove('drop-into', 'drop-above', 'drop-below'));
+  });
+
+  // Where in the row the pointer is decides what the drop means: the top
+  // and bottom edges reorder, the middle nests. Same convention as every
+  // file tree, and it avoids needing separate hairline drop zones.
+  const zoneOf = (e) => {
+    const r = row.getBoundingClientRect();
+    const y = (e.clientY - r.top) / r.height;
+    if (y < 0.28) return 'above';
+    if (y > 0.72) return 'below';
+    return 'into';
+  };
+
+  row.addEventListener('dragover', (e) => {
+    const types = Array.from(e.dataTransfer.types || []);
+    if (!types.includes(FOLDER_DRAG)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    row.classList.remove('drop-into', 'drop-above', 'drop-below');
+    row.classList.add(`drop-${zoneOf(e)}`);
+  });
+
+  row.addEventListener('dragleave', () => {
+    row.classList.remove('drop-into', 'drop-above', 'drop-below');
+  });
+
+  row.addEventListener('drop', async (e) => {
+    const types = Array.from(e.dataTransfer.types || []);
+    if (!types.includes(FOLDER_DRAG)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const zone = zoneOf(e);
+    row.classList.remove('drop-into', 'drop-above', 'drop-below');
+
+    const dragged = e.dataTransfer.getData(FOLDER_DRAG);
+    if (!dragged || dragged === folder.id) return;
+
+    let parentId = folder.id;
+    let index = 0;
+    if (zone !== 'into') {
+      parentId = folder.parentId || '';
+      const siblings = state.folders.filter((f) => (f.parentId || '') === parentId);
+      index = siblings.findIndex((f) => f.id === folder.id);
+      if (zone === 'below') index += 1;
+    }
+    await moveFolder(dragged, parentId, index);
+  });
+}
+
+async function moveFolder(id, parentId, index) {
+  try {
+    const res = await fetch(`/api/folders/${id}/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parentId, index }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not move that');
+    state.folders = await res.json();
+    renderFolders();
+    refreshUndoState();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+/**
+ * Ask for a name and make the folder. `parent` empty means top level.
+ *
+ * The dialog stays open if the server refuses the name - a duplicate among
+ * siblings is the usual reason - so the message lands next to the box that
+ * needs changing instead of in a toast after the typing is gone.
+ *
+ * Returns the new folder, or null if it was cancelled.
+ */
+async function createFolder(parent = '', parentName = '') {
+  let made = null;
+  await askText({
+    title: parent ? 'New subfolder' : 'New folder',
+    sub: parent ? `Inside ${parentName}` : '',
+    placeholder: 'Folder name',
+    okLabel: 'Create',
+    submit: async (name) => {
+      const res = await fetch('/api/folders', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, parentId: parent }),
+      });
+      if (!res.ok) {
+        return (await res.json().catch(() => ({}))).error || 'Could not create that folder';
+      }
+      made = await res.json();
+      return null;
+    },
+  });
+  if (!made) return null;
+
+  // A new subfolder is no use hidden inside a collapsed parent.
+  if (parent) state.folderClosed.delete(parent);
+  await loadFolders();
+  refreshUndoState();
+  toast(parent ? 'Subfolder created' : 'Folder created');
+  return made;
+}
+
+async function renameFolder(folder) {
+  await askText({
+    title: 'Rename folder',
+    value: folder.name,
+    placeholder: 'Folder name',
+    okLabel: 'Rename',
+    submit: async (name) => {
+      if (name === folder.name) return null;
+      const res = await fetch(`/api/folders/${folder.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) return (await res.json().catch(() => ({}))).error || 'Could not rename that';
+      state.folders = await res.json();
+      return null;
+    },
+  });
+  renderFolders();
+  refreshUndoState();
+  load({ reset: true, silent: true });
+}
+
+async function editFolderTags(folder) {
+  await askText({
+    title: 'Folder tags',
+    sub: 'Separate with commas. Tags are searchable, and so are the images inside.',
+    value: (folder.tags || []).join(', '),
+    placeholder: 'commissions, wip, reference',
+    // Save, not Create: an empty box is a real answer here - it clears the
+    // tags - so it must not be treated as "you haven't typed anything yet".
+    okLabel: 'Save',
+    submit: async (text) => {
+      const tags = text.split(',').map((t) => t.trim()).filter(Boolean);
+      const res = await fetch(`/api/folders/${folder.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags }),
+      });
+      if (!res.ok) return 'Could not save those tags';
+      state.folders = await res.json();
+      toast(tags.length ? `Tagged: ${tags.join(', ')}` : 'Tags cleared');
+      return null;
+    },
+  });
+  renderFolders();
+  refreshUndoState();
+}
+
+// --- colour labels and the view menu -----------------------------------
+
+async function loadColorLabels() {
+  try {
+    const body = await fetch('/api/colors').then((r) => r.json());
+    state.colorNames = body.names || {};
+    state.colorCounts = body.counts || {};
+  } catch (e) {
+    state.colorNames = {};
+    state.colorCounts = {};
+  }
+}
+
+/**
+ * Sort order and colour filter in one popover.
+ *
+ * They belong together: both answer "which of my images am I looking at,
+ * and in what order". A bare <select> couldn't show colour swatches, and a
+ * second control in the toolbar for eight small squares would be noise.
+ */
+function renderViewMenu() {
+  const sortLabel = (SORTS.find(([id]) => id === state.settings.sort) || SORTS[0])[1];
+  el.viewMenuLabel.textContent = sortLabel;
+  el.viewMenuDot.hidden = !state.color;
+  if (state.color) el.viewMenuDot.style.background = state.color;
+  el.viewMenuBtn.classList.toggle('filtering', !!state.color);
+
+  const used = LABEL_COLORS.filter(([hex]) => (state.colorCounts[hex.toLowerCase()] || 0) > 0);
+
+  el.viewMenu.innerHTML = `
+    <div class="viewmenu-title">Sort by</div>
+    ${SORTS.map(([id, label]) => `
+      <button class="viewmenu-item${state.settings.sort === id ? ' active' : ''}" data-sort="${id}">
+        <span class="viewmenu-check">${state.settings.sort === id ? '✓' : ''}</span>
+        <span>${esc(label)}</span>
+      </button>`).join('')}
+
+    <div class="viewmenu-sep"></div>
+    <div class="viewmenu-title">Colour label</div>
+    ${used.length === 0 ? `
+      <div class="viewmenu-empty">
+        No colour labels yet. Right-click an image to give it one.
+      </div>` : `
+      <!-- "No filter" is a labelled row, not a swatch. As a swatch it just
+           read as a grey colour label sitting among the real ones. -->
+      <button class="viewmenu-item${!state.color ? ' active' : ''}" data-color="">
+        <span class="viewmenu-check">${!state.color ? '✓' : ''}</span>
+        <span>Any colour</span>
+      </button>
+      <div class="viewmenu-colors">
+        ${used.map(([hex]) => `
+          <button class="viewmenu-color${state.color === hex ? ' active' : ''}"
+            data-color="${hex}" style="background:${hex}"
+            title="${esc(colorLabelName(hex))} — ${state.colorCounts[hex.toLowerCase()]} image${
+              state.colorCounts[hex.toLowerCase()] === 1 ? '' : 's'}"></button>`).join('')}
+      </div>`}`;
+
+  el.viewMenu.querySelectorAll('[data-sort]').forEach((b) => {
+    b.addEventListener('click', () => {
+      saveSettings({ sort: b.dataset.sort });
+      closeViewMenu();
+      renderViewMenu();
+      load({ reset: true });
+    });
+  });
+  el.viewMenu.querySelectorAll('[data-color]').forEach((b) => {
+    b.addEventListener('click', () => {
+      state.color = b.dataset.color || null;
+      renderViewMenu();
+      load({ reset: true });
+    });
+  });
+}
+
+function closeViewMenu() {
+  el.viewMenu.hidden = true;
+  el.viewMenuBtn.setAttribute('aria-expanded', 'false');
+}
+
+el.viewMenuBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!el.viewMenu.hidden) return closeViewMenu();
+  renderViewMenu();
+  el.viewMenu.hidden = false;
+  el.viewMenuBtn.setAttribute('aria-expanded', 'true');
 });
+document.addEventListener('click', (e) => {
+  if (!el.viewMenu.hidden && !e.target.closest('.viewmenu-wrap')) closeViewMenu();
+});
+
+/** Set or clear the colour label on one or many images. */
+async function setColorLabel(ids, color) {
+  const list = Array.isArray(ids) ? ids : [ids];
+  if (!list.length) return;
+  try {
+    if (list.length === 1) {
+      const res = await fetch(`/api/images/${list[0]}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ color }),
+      });
+      if (!res.ok) throw new Error();
+      const updated = await res.json();
+      const rec = state.items.find((r) => r.id === list[0]);
+      if (rec) rec.color = updated.color || '';
+    } else {
+      await bulkRequest({ action: 'update', ids: list, color });
+      list.forEach((id) => {
+        const rec = state.items.find((r) => r.id === id);
+        if (rec) rec.color = color;
+      });
+    }
+  } catch (e) {
+    return toast('Could not set that colour');
+  }
+  await loadColorLabels();
+  render();
+  renderViewMenu();
+  refreshUndoState();
+  if (state.current && list.includes(state.current.id)) renderDetails();
+  toast(color ? `Labelled ${colorLabelName(color).toLowerCase()}` : 'Colour label removed');
+}
+
+el.addFolderBtn.addEventListener('click', () => createFolder());
 
 // Favorites and Pinned accept drops too, so dragging is one gesture for
 // filing, favouriting and pinning alike.
@@ -2280,11 +3122,6 @@ el.zoom.addEventListener('input', () => {
   applyLayout();
 });
 
-el.sortSelect.addEventListener('change', () => {
-  saveSettings({ sort: el.sortSelect.value });
-  load({ reset: true });
-});
-
 el.layoutSwitch.querySelectorAll('.layout-btn').forEach((b) => {
   b.addEventListener('click', () => {
     saveSettings({ layout: b.dataset.layout });
@@ -2333,9 +3170,7 @@ el.bulkFolderBtn.addEventListener('click', (e) => {
   if (newBtn) {
     newBtn.addEventListener('click', async () => {
       el.bulkFolderMenu.hidden = true;
-      const name = prompt('Folder name');
-      if (!name || !name.trim()) return;
-      const folder = await createFolder(name);
+      const folder = await createFolder();
       if (folder) moveToFolder(selectedIds(), folder.id, folder.name);
     });
   }
@@ -2395,6 +3230,15 @@ document.addEventListener('keydown', (e) => {
 
   if (e.key === 'Escape') {
     if (!el.confirmModal.hidden) return;
+    // These run their own key handling while open and have already dealt
+    // with the key; falling through would close the window behind them too.
+    if (!el.askModal.hidden) return;
+    // Popovers first: Escape should dismiss the smallest thing that is
+    // open, not jump past it to close the window behind it.
+    if (!el.viewMenu.hidden) return closeViewMenu();
+    if (!el.bulkFolderMenu.hidden) return (el.bulkFolderMenu.hidden = true);
+    if (!el.welcomeModal.hidden) return (el.welcomeModal.hidden = true);
+    if (!el.updateToast.hidden) return hideUpdateToast();
     if (!el.extModal.hidden) return (el.extModal.hidden = true);
     if (!el.onboardModal.hidden) return finishOnboarding();
     if (!el.settingsModal.hidden) return (el.settingsModal.hidden = true);
@@ -2404,6 +3248,14 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !el.onboardModal.hidden && !typing) {
     e.preventDefault();
     return onboardNext();
+  }
+  if ((e.ctrlKey || e.metaKey) && !typing && (e.key === 'z' || e.key === 'Z')) {
+    e.preventDefault();
+    return doUndo(e.shiftKey);
+  }
+  if ((e.ctrlKey || e.metaKey) && !typing && (e.key === 'y' || e.key === 'Y')) {
+    e.preventDefault();
+    return doUndo(true);
   }
   if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
     e.preventDefault(); el.search.focus(); el.search.select();
@@ -2451,11 +3303,421 @@ setInterval(() => {
 // devtools console when a layout or selection problem needs diagnosing.
 window.gallery = { state, load, render, applyLayout, updateSelectionUI, setSelectMode };
 
+// Dropping a folder here pulls it out to the top level - the one move
+// that has no row to aim at.
+wireFolderRootDrop();
+function wireFolderRootDrop() {
+  const zone = el.folderRootDrop;
+  zone.addEventListener('dragover', (e) => {
+    if (!Array.from(e.dataTransfer.types || []).includes(FOLDER_DRAG)) return;
+    e.preventDefault();
+    zone.classList.add('active');
+  });
+  zone.addEventListener('dragleave', () => zone.classList.remove('active'));
+  zone.addEventListener('drop', (e) => {
+    if (!Array.from(e.dataTransfer.types || []).includes(FOLDER_DRAG)) return;
+    e.preventDefault();
+    zone.classList.remove('active');
+    const id = e.dataTransfer.getData(FOLDER_DRAG);
+    if (id) moveFolder(id, '', -1);
+  });
+}
+
+/* The sidebar is draggable-wide. The width is a CSS variable so the grid
+   and the JS-measured layouts both follow it without special cases. */
+(function wireSidebarResize() {
+  let startX = 0;
+  let startW = 0;
+  let width = 0;
+  let dragging = false;
+
+  const apply = (w) => {
+    width = Math.round(Math.max(170, Math.min(460, w)));
+    document.documentElement.style.setProperty('--sidebar-w', `${width}px`);
+    return width;
+  };
+
+  el.sidebarResizer.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    startX = e.clientX;
+    startW = el.app.querySelector('.sidebar').getBoundingClientRect().width;
+    width = Math.round(startW);
+    try {
+      el.sidebarResizer.setPointerCapture(e.pointerId);
+    } catch (err) { /* synthetic pointers have nothing to capture */ }
+    el.sidebarResizer.classList.add('dragging');
+    // The grid animates its columns, which is right when the panel is
+    // toggled and wrong while dragging - the sidebar would trail the
+    // pointer, and the width read on release would be a frame of the
+    // animation rather than where the pointer actually is.
+    el.app.classList.add('resizing');
+    e.preventDefault();
+  });
+
+  el.sidebarResizer.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    apply(startW + (e.clientX - startX));
+    scheduleLayout();
+  });
+
+  const stop = () => {
+    if (!dragging) return;
+    dragging = false;
+    el.sidebarResizer.classList.remove('dragging');
+    el.app.classList.remove('resizing');
+    // Save what was asked for, not what the layout has caught up to.
+    saveSettings({ sidebarWidth: width });
+    applyLayout();
+  };
+  el.sidebarResizer.addEventListener('pointerup', stop);
+  el.sidebarResizer.addEventListener('pointercancel', stop);
+
+  // Double-click resets it.
+  el.sidebarResizer.addEventListener('dblclick', () => {
+    apply(232);
+    width = 232;
+    saveSettings({ sidebarWidth: 232 });
+    applyLayout();
+  });
+})();
+
+/* ------------------------------------------------------------------ updates
+
+   The app checks GitHub's releases page for this project - there is no
+   server of ours in the picture - and, on the first open of the day, says
+   so in the corner rather than in the middle of the screen. Agreeing
+   downloads the same installer people get by hand and runs it silently;
+   the installer closes the app, replaces it, and starts it again. What's
+   new is then shown once, from the release notes of the build that landed.
+
+   Nothing about this is required: it can be ignored, dismissed, or left
+   turned off, and the app works exactly the same either way. */
+
+const UPDATE_POLL_MS = 600;
+let updatePollTimer = null;
+let updateOverlayOpen = false;
+let latestRelease = null;
+
+async function updateState() {
+  try {
+    return await fetch('/api/update/state').then((r) => r.json());
+  } catch (e) {
+    return null;
+  }
+}
+
+function bytesLabel(n) {
+  if (!n || n < 0) return '';
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/* Release notes are markdown on GitHub. This renders the small part of it
+   that changelogs actually use - headings, bullets, bold, code, links -
+   after escaping, so a release body can never inject markup. */
+function renderNotes(md) {
+  const inline = (s) => esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+  const out = [];
+  let list = null;
+  for (const raw of String(md || '').split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
+    const heading = line.match(/^\s*(#{1,4})\s+(.*)$/);
+    if (bullet) {
+      if (!list) { list = []; }
+      list.push(`<li>${inline(bullet[1])}</li>`);
+      continue;
+    }
+    if (list) { out.push(`<ul>${list.join('')}</ul>`); list = null; }
+    if (heading) {
+      out.push(`<h4>${inline(heading[2])}</h4>`);
+    } else if (line.trim()) {
+      out.push(`<p>${inline(line)}</p>`);
+    }
+  }
+  if (list) out.push(`<ul>${list.join('')}</ul>`);
+  return out.join('') || '<p class="muted">No notes were published with this release.</p>';
+}
+
+// --- the corner prompt --------------------------------------------------
+
+function showUpdateToast(rel) {
+  latestRelease = rel;
+  el.updateToastTitle.textContent = `Build ${rel.version} is available`;
+  el.updateToastBody.innerHTML = `
+    <div class="update-toast-note">You're on Build ${esc(state.appVersion || '')}.</div>
+    ${rel.assetSize ? `<div class="update-toast-size">${bytesLabel(rel.assetSize)} download</div>` : ''}`;
+  el.updateToast.hidden = false;
+  // Animate in on the next frame so the transition has a start state.
+  requestAnimationFrame(() => el.updateToast.classList.add('in'));
+}
+
+function hideUpdateToast() {
+  el.updateToast.classList.remove('in');
+  setTimeout(() => { el.updateToast.hidden = true; }, 200);
+}
+
+// --- the installing overlay --------------------------------------------
+
+function openUpdateOverlay() {
+  updateOverlayOpen = true;
+  el.updateModal.hidden = false;
+}
+
+function closeUpdateOverlay() {
+  updateOverlayOpen = false;
+  el.updateModal.hidden = true;
+}
+
+function paintUpdateProgress(p) {
+  if (!p) return;
+  const pct = Math.max(0, Math.min(100, p.percent || 0));
+  el.updateBarFill.style.width = `${pct}%`;
+  el.updateStage.dataset.state = p.state;
+
+  if (p.state === 'downloading') {
+    el.updateHeadline.textContent = `Downloading Build ${p.release?.version || ''}`.trim();
+    el.updateSub.textContent = p.total
+      ? `${bytesLabel(p.downloaded)} of ${bytesLabel(p.total)}`
+      : bytesLabel(p.downloaded);
+  } else if (p.state === 'installing') {
+    el.updateHeadline.textContent = 'Installing…';
+    el.updateSub.textContent = 'The app will close and reopen in a moment.';
+    el.updateBarFill.style.width = '100%';
+    el.updateActions.hidden = true;
+  } else if (p.state === 'ready') {
+    el.updateHeadline.textContent = 'Ready to install';
+    el.updateSub.textContent = '';
+  } else if (p.state === 'error') {
+    el.updateHeadline.textContent = 'That didn’t work';
+    el.updateSub.textContent = p.message || '';
+  }
+}
+
+/* One poll loop drives both the About tab and the overlay, so there is
+   never a second timer disagreeing with the first about what is happening. */
+function startUpdatePolling() {
+  if (updatePollTimer) return;
+  updatePollTimer = setInterval(async () => {
+    const st = await updateState();
+    const p = st?.progress;
+    if (!p) return;
+
+    if (el.settingsModal && !el.settingsModal.hidden) paintUpdateStatus(p);
+    if (updateOverlayOpen) paintUpdateProgress(p);
+
+    if (p.state === 'downloading' || p.state === 'checking' || p.state === 'installing') return;
+
+    clearInterval(updatePollTimer);
+    updatePollTimer = null;
+
+    if (p.state === 'ready') {
+      if (updateOverlayOpen) {
+        installUpdate();
+      } else {
+        // They put the overlay away while it downloaded. Restarting the
+        // app out from under them at that point would be rude, so it waits
+        // to be asked again.
+        toast(`Build ${p.release?.version || ''} is downloaded — open Settings ▸ About to install.`);
+      }
+    }
+  }, UPDATE_POLL_MS);
+}
+
+async function beginUpdate() {
+  hideUpdateToast();
+  openUpdateOverlay();
+  el.updateActions.hidden = false;
+  el.updateHeadline.textContent = 'Starting download…';
+  el.updateSub.textContent = '';
+  el.updateBarFill.style.width = '0%';
+  await fetch('/api/update/download', { method: 'POST' }).catch(() => {});
+  startUpdatePolling();
+}
+
+async function installUpdate() {
+  openUpdateOverlay();
+  el.updateActions.hidden = true;
+  el.updateHeadline.textContent = 'Installing…';
+  el.updateSub.textContent = 'The app will close and reopen in a moment.';
+  el.updateBarFill.style.width = '100%';
+  try {
+    const res = await fetch('/api/update/install', { method: 'POST' });
+    if (!res.ok) {
+      const { error } = await res.json().catch(() => ({}));
+      el.updateHeadline.textContent = 'That didn’t work';
+      el.updateSub.textContent = error || 'The installer could not be started.';
+      el.updateActions.hidden = false;
+    }
+  } catch (e) {
+    // The app exiting mid-request looks exactly like this, and that is the
+    // successful case, so it is not reported as a failure.
+  }
+}
+
+// --- Settings ▸ About ---------------------------------------------------
+
+function paintUpdateStatus(p) {
+  if (!el.updateStatus) return;
+  const map = {
+    checking: 'Checking…',
+    uptodate: p.message || 'You’re on the latest build',
+    available: `Build ${p.release?.version} is available`,
+    downloading: `Downloading… ${Math.round(p.percent || 0)}%`,
+    ready: 'Downloaded — ready to install',
+    installing: 'Installing…',
+    error: p.message || 'Something went wrong',
+    idle: '',
+  };
+  el.updateStatus.textContent = map[p.state] ?? '';
+  el.updateStatus.dataset.state = p.state;
+
+  // When there is something to install, the check button becomes the way
+  // to install it rather than a second, redundant "check again".
+  if (p.state === 'available' && p.release?.assetUrl) {
+    el.checkUpdateBtn.textContent = `Update to Build ${p.release.version}`;
+    el.checkUpdateBtn.classList.add('primary');
+    el.checkUpdateBtn.dataset.action = 'download';
+  } else if (p.state === 'ready') {
+    el.checkUpdateBtn.textContent = 'Install now';
+    el.checkUpdateBtn.classList.add('primary');
+    el.checkUpdateBtn.dataset.action = 'install';
+  } else {
+    el.checkUpdateBtn.textContent = 'Check for updates';
+    el.checkUpdateBtn.classList.remove('primary');
+    el.checkUpdateBtn.dataset.action = 'check';
+  }
+  el.checkUpdateBtn.disabled = p.state === 'checking' || p.state === 'downloading' || p.state === 'installing';
+}
+
+function renderAbout() {
+  if (!el.aboutVersion) return;
+  el.aboutVersion.textContent = `Build ${state.appVersion || '—'}`;
+
+  el.autoUpdateSwitch.innerHTML = `
+    <label class="switch-row">
+      <input type="checkbox" class="switch-input"${state.settings.autoUpdate ? ' checked' : ''} />
+      <span class="switch-track"><span class="switch-knob"></span></span>
+      <span class="switch-text">
+        <span class="switch-title">Install updates automatically</span>
+        <span class="switch-desc">
+          Once a day, check for a new build and install it without asking.
+          With this off you'll still be told when one is available, and
+          nothing is downloaded until you say so.
+        </span>
+      </span>
+    </label>`;
+  const auto = el.autoUpdateSwitch.querySelector('.switch-input');
+  auto.addEventListener('change', () => {
+    saveSettings({ autoUpdate: auto.checked });
+    toast(auto.checked
+      ? 'Updates will install automatically.'
+      : 'You’ll be asked before any update is installed.');
+  });
+
+  updateState().then((st) => {
+    if (!st) return;
+    if (st.progress) paintUpdateStatus(st.progress);
+    if (st.repo && el.aboutRepo) el.aboutRepo.href = st.repo + '/releases';
+  });
+}
+
+el.checkUpdateBtn?.addEventListener('click', async () => {
+  const action = el.checkUpdateBtn.dataset.action || 'check';
+  if (action === 'install') { el.settingsModal.hidden = true; installUpdate(); return; }
+  if (action === 'download') { el.settingsModal.hidden = true; beginUpdate(); return; }
+  el.updateStatus.textContent = 'Checking…';
+  el.checkUpdateBtn.disabled = true;
+  await fetch('/api/update/check', { method: 'POST' }).catch(() => {});
+  startUpdatePolling();
+});
+
+el.updateToastGo?.addEventListener('click', beginUpdate);
+el.updateToastLater?.addEventListener('click', hideUpdateToast);
+el.updateToastClose?.addEventListener('click', hideUpdateToast);
+// "Cancel" leaves the download running rather than pretending to stop it -
+// there is nothing to stop it with - so it says what it really does.
+el.updateCancel?.addEventListener('click', closeUpdateOverlay);
+
+// --- what's new, after an update ---------------------------------------
+
+async function showWelcomeIfUpdated() {
+  let rel = null;
+  try {
+    ({ release: rel } = await fetch('/api/update/welcome').then((r) => r.json()));
+  } catch (e) { return; }
+  if (!rel) return;
+
+  el.welcomeTitle.textContent = rel.name || `Build ${rel.version}`;
+  el.welcomeSub.textContent = 'Updated and ready to go.';
+  el.welcomeBody.innerHTML = renderNotes(rel.notes);
+  if (rel.url) {
+    el.welcomeLink.href = rel.url;
+    el.welcomeLink.hidden = false;
+  } else {
+    el.welcomeLink.hidden = true;
+  }
+  el.welcomeModal.hidden = false;
+}
+
+el.welcomeDone?.addEventListener('click', () => { el.welcomeModal.hidden = true; });
+
+/* The daily check. The server decides whether today's has already
+   happened, so reopening the window five times does not mean five
+   prompts. */
+async function maybeCheckDaily() {
+  // Not during first-run setup. Someone who has owned the app for ninety
+  // seconds does not need to be told there is a newer one, and the prompt
+  // would land on top of the setup steps.
+  if (!state.settings.onboarded) return;
+
+  let res;
+  try {
+    res = await fetch('/api/update/daily', { method: 'POST' }).then((r) => r.json());
+  } catch (e) { return; }
+  if (!res?.first) return;
+
+  if (res.autoUpdate) {
+    // The server is already downloading. Show what's happening rather than
+    // closing the app out of nowhere.
+    openUpdateOverlay();
+    el.updateActions.hidden = false;
+    el.updateHeadline.textContent = 'Checking for updates…';
+    startUpdatePolling();
+    return;
+  }
+
+  // Wait for the check the server kicked off, then prompt only if there is
+  // genuinely something newer with an installer attached.
+  for (let i = 0; i < 40; i++) {
+    const st = await updateState();
+    const p = st?.progress;
+    if (p && p.state !== 'checking' && p.state !== 'idle') {
+      if (p.state === 'available' && p.release?.newer && p.release?.assetUrl) {
+        showUpdateToast(p.release);
+      }
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
+
 (async () => {
   await loadSettings();
   loadStorageInfo();
+  refreshUndoState();
+  await loadColorLabels();
   renderInspector();
   loadFolders();
   await load({ reset: true });
   maybeStartOnboarding();
+  // Both of these are deliberately last: the gallery should be on screen
+  // before anything talks about versions.
+  showWelcomeIfUpdated();
+  maybeCheckDaily();
 })();

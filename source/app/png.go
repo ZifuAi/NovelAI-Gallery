@@ -21,21 +21,21 @@ var pngSignature = []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}
 
 // Meta is the normalized metadata attached to each stored image.
 type Meta struct {
-	IsNovelAI      bool                   `json:"isNovelAI"`
-	Width          int                    `json:"width"`
-	Height         int                    `json:"height"`
-	Prompt         string                 `json:"prompt"`
-	NegativePrompt string                 `json:"negativePrompt"`
-	Seed           any                    `json:"seed"`
-	Steps          any                    `json:"steps"`
-	Sampler        string                 `json:"sampler"`
-	Scale          any                    `json:"scale"`
-	Strength       any                    `json:"strength"`
-	Noise          any                    `json:"noise"`
-	Model          string                 `json:"model"`
-	Software       string                 `json:"software"`
-	Comment        map[string]any         `json:"comment"`
-	Raw            map[string]string      `json:"raw"`
+	IsNovelAI      bool              `json:"isNovelAI"`
+	Width          int               `json:"width"`
+	Height         int               `json:"height"`
+	Prompt         string            `json:"prompt"`
+	NegativePrompt string            `json:"negativePrompt"`
+	Seed           any               `json:"seed"`
+	Steps          any               `json:"steps"`
+	Sampler        string            `json:"sampler"`
+	Scale          any               `json:"scale"`
+	Strength       any               `json:"strength"`
+	Noise          any               `json:"noise"`
+	Model          string            `json:"model"`
+	Software       string            `json:"software"`
+	Comment        map[string]any    `json:"comment"`
+	Raw            map[string]string `json:"raw"`
 }
 
 func isPNG(b []byte) bool {

@@ -10,10 +10,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-
 )
 
-const appVersion = "1.6.0"
+const appVersion = "1.1"
 const appName = "NovelAI Gallery"
 
 //go:embed all:web
@@ -109,7 +108,12 @@ func main() {
 		fatal("Could not open your gallery storage:\n" + err.Error())
 	}
 
-	srv := &Server{store: store, app: app, reuseCh: make(chan string, 1)}
+	srv := &Server{
+		store:   store,
+		app:     app,
+		updater: NewUpdater(data),
+		reuseCh: make(chan string, 1),
+	}
 	ln, err := srv.Listen()
 	if err != nil {
 		fatal("Could not start the gallery:\n" + err.Error())

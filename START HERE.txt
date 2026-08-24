@@ -1,108 +1,222 @@
-NovelAI Gallery  v1.6
-=====================
+NovelAI Gallery  -  Build 1.1
+=============================
 
-WHAT'S NEW IN THIS VERSION
+Two big things this round: folders that actually behave like folders, and
+the app updating itself from your GitHub page.
+
+
+FOLDERS
+-------
+
+  Nested subfolders.  Right-click a folder for "New subfolder", or drag one
+  folder onto another to move it inside. Drag it onto the LIBRARY heading
+  to bring it back out to the top level, or drop it between two rows to
+  reorder. Where you're about to drop is shown while you drag - a line
+  between rows means reorder, a highlighted row means "into this one".
+
+  Renaming.  Right-click -> Rename, or double-click the name.
+
+  Tags.  Right-click -> Tags. They're plain searchable text, so a folder
+  tagged "commissions" turns up when you search that word - and so do the
+  images inside it, including images in its subfolders.
+
+  Counts roll up.  A parent shows everything underneath it, not just what
+  is filed directly in it. Searching or opening a parent does the same.
+
+  A folder can't be dropped inside itself. That would cut the branch loose
+  from the tree, so the app refuses instead of losing it.
+
+  The sidebar resizes.  Drag its edge; double-click to reset. The gallery
+  layouts measure the new width rather than guessing, so waterfall and
+  justified re-flow properly instead of overflowing.
+
+
+UNDO AND REDO
+-------------
+
+  Ctrl+Z undoes, Ctrl+Shift+Z or Ctrl+Y redoes. It covers everything that
+  changes the library: deletes, moves between folders, renames, folder
+  reshuffles, colour labels, pin/favorite, and every bulk action.
+
+  Deleting moves files to a trash folder rather than destroying them, so
+  undoing a delete brings back the actual .png and not just its entry.
+
+  Fifty steps, held in memory. It starts fresh each launch, and the trash
+  is emptied then - anything still in it belongs to a history that didn't
+  survive the restart, so it could never be restored anyway.
+
+
+COLOUR LABELS
+-------------
+
+  These went on individual images, not folders - that's what you asked for
+  on the second pass. Right-click an image -> Colour, or use the details
+  panel.
+
+  The filter lives in the sort dropdown at the top, which has been redone:
+  sort options up top, colour swatches underneath. Only colours you have
+  actually used are shown, so it never becomes a wall of unused dots.
+
+  Settings -> Library lets you name each colour ("keepers", "to redo"), so
+  a swatch still means something in a month.
+
+
+AUTOMATIC UPDATES
+-----------------
+
+  The first time you open the app each day it checks
+
+    https://github.com/ZifuAi/NovelAI-Gallery
+
+  and if there's a newer release it says so in the bottom corner - a small
+  card, not a dialog in your way. Say yes and it downloads that release's
+  installer with a progress bar, installs it, reopens the app, and shows
+  you the release notes for the build that just landed. Once.
+
+  Settings -> About has the build number, a "Check for updates" button and
+  a switch for doing it automatically without asking.
+
+  There is no server. The app reads your repository's public releases API
+  directly and downloads the .exe attached to the newest release. Nothing
+  to host, nothing to run.
+
+  To publish an update: make a GitHub release tagged v1.2 (or whatever is
+  next), attach NovelAI-Gallery-Setup.exe to it, and write the release
+  notes as normal markdown - headings, bullets, bold and `code` all render
+  on the what's-new screen. The tag is what the app compares against, so
+  it has to be a number: v1.2, v1.3, v2.0.
+
+  A few deliberate choices:
+
+    - Nothing downloads until you agree, unless you turned automatic on.
+    - A failed check (offline, GitHub having a moment) does not use up the
+      day, so a real update isn't hidden until tomorrow.
+    - The prompt never appears during first-run setup.
+    - It installs with the same installer you'd download by hand, so
+      there's no second upgrade path to keep working.
+
+
+THE INSTALLER NOW UPGRADES
 --------------------------
 
-1. FIRST-RUN SETUP
-   Opening the app for the first time now walks through the things worth
-   deciding once - theme, prompts as tags or plain text, what gets saved,
-   and whether saved images should stay here instead of downloading - and
-   ends on the step that actually matters: installing the extension.
-   Every choice applies as you make it, and all of them are in Settings
-   afterwards. The × skips the whole thing.
+  Running the installer over an existing copy finds where it already lives
+  instead of installing a second one somewhere else, closes the app if it's
+  running (Windows won't replace a locked .exe), skips the "choose a
+  folder" page, and leaves %APPDATA%\NovelAI Gallery completely alone.
 
-2. RIGHT-CLICK MENUS
-   Right-click an image for open, select, move to folder, pin, favorite,
-   reuse prompt, copy prompt, open in folder and delete. Right-click a
-   folder in the sidebar for open and delete. Right-click empty gallery
-   space for import, refresh, select all and new folder. Right-clicking
-   one image of a selection acts on the whole selection.
-   Text boxes keep the browser's own menu, so copy and paste still work
-   where you'd expect them to.
 
-3. FULL-SIZE VIEW WITH ZOOM
-   Small expand icon in the bottom-left of the opened image. Scroll to
-   zoom, drag to move, double-click to toggle fit and 100%. Back button
-   top-left. Keys: F opens it, 0 fits, 1 is actual size, +/- zoom, Esc
-   goes back.
+NEW DEFAULTS
+------------
 
-4. PROMPT SECTIONS START COLLAPSED
-   As asked. The count stays on each header, so nothing is hidden - it
-   just doesn't bury the generation settings under a hundred tags.
+  Waterfall layout, and the details panel off. Both as asked. Metadata
+  sections also all start collapsed now, including Generation and File.
 
-5. OPEN IN FOLDER ACTUALLY OPENS THE FOLDER NOW
-   It never worked, and the cause is a genuinely nasty Windows quirk.
-   Explorer's /select needs the quotes around the path only:
 
-       explorer.exe /select,"C:\...\NovelAI Gallery\...\x.png"
+SETTINGS HAS TABS
+-----------------
 
-   Go builds command lines the way the C runtime expects, which quotes the
-   whole argument instead:
+  Four: Appearance, Library, Capture, About. Nothing was removed - the same
+  settings, sorted. The window stays one size as you move between them
+  rather than resizing itself under the pointer; a tall tab scrolls inside
+  it instead.
 
-       explorer.exe "/select,C:\...\NovelAI Gallery\...\x.png"
 
-   Explorer reads that leading quote as the start of a path, can't make
-   sense of it, and quietly opens Documents - which looks exactly like the
-   button doing nothing. Your data folder has a space in its name, so this
-   bit every single time. The command line is now built by hand, and a
-   launch failure is reported instead of a toast claiming success.
+FIXES FROM YOUR FEEDBACK ON THIS BUILD
+--------------------------------------
 
-6. NO MORE FLICKER ON AN EMPTY VIEW
-   An empty library, folder, or search flashed a grid of placeholder tiles
-   every few seconds. The skeleton was being re-rendered on every
-   background refresh whenever there was no grid on screen. It's now a
-   first-load affordance only, and an unchanged empty view isn't redrawn
-   at all. Refreshing still happens exactly as often.
+  Creating folders was broken.  The button called a function that did not
+  exist, so nothing happened - top-level folders and subfolders alike. It
+  works now, and the new test suite drives it by clicking and typing rather
+  than by calling the API, which is exactly why the first one missed this.
 
-7. UNINSTALLING CAN NOW REMOVE EVERYTHING
-   Uninstall asks whether to delete your images and settings as well.
-   Answer No and the library survives for a reinstall, as before; answer
-   Yes and nothing is left behind. It also clears two things the old
-   uninstaller left: the WebView2 cache folder (which kept the whole
-   install directory alive) and the browser-engine data folder. That's
-   what you were seeing survive a reinstall.
+  Naming things has its own dialog.  New folder, rename and tags no longer
+  use the browser's grey OS box. The app's own dialog matches your theme,
+  says what it's for, focuses the field, takes Enter and Escape, and - when
+  a name clashes with a sibling - explains it right under the field with
+  what you typed still there, instead of throwing it away.
+
+  "No colour filter" reads as one.  It was a grey swatch sitting among the
+  real colours, which just looked like the colour grey. It's now a proper
+  labelled row - "Any colour" - with a tick, matching the sort options
+  above it. The "no colour" button in the details panel has a slash through
+  it for the same reason.
+
+  The NSFW switch shows its state.  The checked styling was written as
+  ".switch-row input:checked", and the toggle in the details panel sits in
+  .nsfw-row - so it looked permanently off however it was set. The styling
+  is now attached to the switch itself, wherever it is used.
+
+  Revealed images can be re-hidden.  A small button in the corner of a
+  revealed image puts the cover back, so checking one image doesn't leave
+  it uncovered for the rest of the session.
+
+  Escape closes popovers.  It closed modals but not the sort menu or the
+  folder popover.
 
 
 UPGRADING
 ---------
 
-Install over the top; nothing to do in the browser this time, the changes
-are all in the app.
+  Run NovelAI-Gallery-Setup.exe over the top. Your library and settings are
+  untouched. Nothing to do in the browser; the extension is unchanged this
+  round, though the app refreshes its copy on every launch anyway.
 
 
-IF SOMETHING ISN'T WORKING
---------------------------
+WHAT I TESTED
+-------------
 
-Click the extension's toolbar icon, open "Diagnostics", press "Copy
-diagnostics", and send me that.
+  Go: 21 tests, race detector clean. New this round: version comparison
+  (including 1.10 vs 1.2, and 1.1 vs 1.1.0), parsing a release and picking
+  the .exe out of several attachments, a 404 from a repo with no releases
+  being treated gently rather than as an error, the download writing to a
+  .part file and renaming only on success, the changelog surviving the
+  restart and being shown exactly once, the daily check happening once a
+  day, a failed check not using up the day, and the settings screen being
+  unable to clobber the update bookkeeping by echoing it back.
+
+  Browser, against a fake GitHub: no prompt when you're current, the prompt
+  appearing with the right build and download size, "Not now" not starting
+  anything, the progress bar following the download, a finished download
+  installing itself, the changelog rendering headings/bullets/bold/code,
+  being shown once and not on every launch, release notes being escaped so
+  a release body can't inject markup, no prompt during first-run setup, and
+  the About tab.
+
+  Browser, folders driven by clicking and typing: 23 checks covering the
+  + button, Enter and Escape, a duplicate name being refused in place and
+  corrected without starting over, subfolders two deep with the indentation
+  to match, the same name allowed under a different parent, renaming, tags
+  saving and clearing, undo, and a guard that fails the run if a native
+  browser dialog ever appears again.
+
+  Browser, the five fixes above: 21 checks covering the "Any colour" row,
+  filtering and clearing by colour, the NSFW switch's knob and track
+  actually changing on toggle, reveal and re-hide affecting only the image
+  you clicked and surviving a background refresh, and the settings window
+  measuring identical on all four tabs with the tab strip not moving.
+
+  Browser, against the real app with a real library: 35 checks covering
+  nesting three deep with the indentation to match, counts rolling up,
+  refusing a folder dropped into its own descendant, rename + undo + redo,
+  deleting an image and undoing it back onto disk, colour labels and
+  filtering, all four layouts laying out without sideways overflow, aspect
+  ratios surviving every layout, the redesigned sort menu, the four
+  settings tabs, dragging the sidebar and the width being remembered, and
+  an empty view not being rewritten on refresh.
 
 
-WHAT'S IN THIS FOLDER
+WHAT I COULD NOT TEST
 ---------------------
 
-NovelAI-Gallery-Setup.exe  The installer. The only file you need.
-extension\                 Spare copy (the installer already bundles it).
-source\                    Full source, with a build script.
-README.md                  Full documentation.
+  Same as always: there's no Windows machine here, so the parts that only
+  exist on Windows are reasoned about rather than run - the title bar
+  colours, the window icon, Explorer's "open in folder", and the installer
+  itself. New to that list this round: actually running the downloaded
+  installer and restarting the app. The Go side of it compiles for Windows
+  and the flags match what installer.nsi expects (/S for silent, /RESTART
+  to reopen), but the first real end-to-end update is one you'll do rather
+  than one I've watched.
 
-
-WHAT I TESTED, AND WHAT I COULDN'T
-----------------------------------
-
-119 checks across six suites, all passing. New this round: setup appearing
-on a fresh library and never again after finishing, with every choice made
-during it actually saved; the right-click menus on an image, on a folder
-and on empty space, including drilling into the folder list and closing on
-Escape; the full-size view opening at fit, zooming, returning to fit with
-0, and the Back button landing you where you started; prompt sections
-starting collapsed; and an empty view surviving three refresh cycles with
-zero DOM changes.
-
-What I could not test: anything Windows-specific - the icon, the title bar
-colours, "open in folder", and the uninstaller. There's no Windows machine
-here; the app cross-compiles from Linux. The parts that can be tested off
-Windows are: the installer script compiles, and the command line Explorer
-receives is built by a function with its own unit test pinning the quote
-placement. The rest is reasoning from documented behaviour, and I'd rather
-say so than imply I watched it work.
+  I also couldn't reach api.github.com from here - this sandbox blocks it -
+  so the check was tested against a local stand-in serving GitHub's exact
+  response shape, not against GitHub itself.

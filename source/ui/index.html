@@ -26,16 +26,19 @@
 
       <div class="count-pill" id="countPill"></div>
 
-      <label class="select-wrap" title="Sort order">
-        <select id="sortSelect" aria-label="Sort order">
-          <option value="newest">Newest first</option>
-          <option value="oldest">Oldest first</option>
-          <option value="prompt">Prompt A–Z</option>
-          <option value="model">Model A–Z</option>
-          <option value="largest">Largest first</option>
-          <option value="smallest">Smallest first</option>
-        </select>
-      </label>
+      <div class="viewmenu-wrap">
+        <button class="viewmenu-btn" id="viewMenuBtn" aria-haspopup="true" aria-expanded="false">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M4 7h16M7 12h10M10 17h4"></path>
+          </svg>
+          <span id="viewMenuLabel">Newest first</span>
+          <span class="viewmenu-dot" id="viewMenuDot" hidden></span>
+          <svg class="viewmenu-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 9l6 6 6-6"></path>
+          </svg>
+        </button>
+        <div class="viewmenu" id="viewMenu" hidden></div>
+      </div>
 
       <div class="layout-switch" id="layoutSwitch" role="group" aria-label="Gallery layout">
         <button class="layout-btn" data-layout="grid" title="Grid" aria-label="Grid layout">
@@ -140,15 +143,19 @@
         </button>
       </div>
 
-      <div>
-        <div class="nav-group-label">Folders</div>
-        <div id="folderList"></div>
-        <button class="nav-item folder-add" id="addFolderBtn">
-          <span class="nav-icon">+</span>
-          <span class="nav-label">New folder</span>
-        </button>
+      <div class="folder-section">
+        <div class="nav-group-label">
+          Folders
+          <button class="group-action" id="addFolderBtn" title="New folder" aria-label="New folder">+</button>
+        </div>
+        <div id="folderList" class="folder-list"></div>
+        <div class="folder-root-drop" id="folderRootDrop">Drop here for a top-level folder</div>
       </div>
+
     </aside>
+
+    <div class="sidebar-resizer" id="sidebarResizer" role="separator"
+         aria-label="Resize sidebar" aria-orientation="vertical"></div>
 
     <main class="content" id="content"></main>
 
@@ -215,61 +222,107 @@
         <div class="modal-title">Settings</div>
         <button class="btn icon-only" id="settingsClose" aria-label="Close settings">×</button>
       </div>
+
+      <div class="settings-tabs" id="settingsTabs" role="tablist">
+        <button class="settings-tab active" data-tab="appearance" role="tab">Appearance</button>
+        <button class="settings-tab" data-tab="library" role="tab">Library</button>
+        <button class="settings-tab" data-tab="capture" role="tab">Capture</button>
+        <button class="settings-tab" data-tab="about" role="tab">About</button>
+      </div>
+
       <div class="modal-body settings-body">
 
-       <div class="settings-col">
-        <div class="settings-group">
-          <div class="settings-legend">Theme</div>
-          <div class="theme-heading">Dark</div>
-          <div class="theme-grid" id="darkThemes"></div>
-          <div class="theme-heading">Light</div>
-          <div class="theme-grid" id="lightThemes"></div>
-        </div>
-
-        <div class="settings-group">
-          <div class="settings-legend">How prompts are shown</div>
-          <div id="metaViews"></div>
-        </div>
-       </div>
-
-       <div class="settings-col">
-        <div class="settings-group">
-          <div class="settings-legend">Browser extension</div>
-          <div class="ext-status" id="extStatus">
-            <span class="dot" id="extDot"></span>
-            <span id="extStatusText">Checking…</span>
+        <section class="settings-pane active" data-pane="appearance">
+          <div class="settings-group">
+            <div class="settings-legend">Theme</div>
+            <div class="theme-heading">Dark</div>
+            <div class="theme-grid" id="darkThemes"></div>
+            <div class="theme-heading">Light</div>
+            <div class="theme-grid" id="lightThemes"></div>
           </div>
-          <button class="btn primary full" id="setupExtBtn">Set up the extension</button>
-          <div class="hint-inline">
-            Images not showing up? Open a NovelAI tab, then click the extension's
-            toolbar icon and use <strong>Import NovelAI history now</strong>. The
-            Diagnostics section there shows exactly what it can and can't see.
+
+          <div class="settings-group">
+            <div class="settings-legend">How prompts are shown</div>
+            <div id="metaViews"></div>
           </div>
-        </div>
+        </section>
 
-        <div class="settings-group">
-          <div class="settings-legend">What the browser extension saves</div>
-          <div id="captureModes"></div>
+        <section class="settings-pane" data-pane="library">
+          <div class="settings-group">
+            <div class="settings-legend">Explicit content</div>
+            <div id="nsfwSwitch"></div>
+          </div>
 
-          <div id="interceptSwitch"></div>
-        </div>
+          <div class="settings-group">
+            <div class="settings-legend">Tag colours</div>
+            <div id="tagManager"></div>
+          </div>
 
-        <div class="settings-group">
-          <div class="settings-legend">Gallery</div>
-          <div class="danger-zone">
-            <div class="danger-text">
-              <div class="danger-title">Clear the whole gallery</div>
-              <div class="danger-desc">
-                Permanently deletes every image and its metadata from
-                <span id="clearCount">this gallery</span>. Your folders, themes and
-                settings are kept. Images already saved elsewhere on your PC are
-                untouched. This cannot be undone.
+          <div class="settings-group">
+            <div class="settings-legend">Danger zone</div>
+            <div class="danger-zone">
+              <div class="danger-text">
+                <div class="danger-title">Clear the whole gallery</div>
+                <div class="danger-desc">
+                  Permanently deletes every image and its metadata from
+                  <span id="clearCount">this gallery</span>. Your folders, themes and
+                  settings are kept. Images already saved elsewhere on your PC are
+                  untouched.
+                </div>
+              </div>
+              <button class="btn danger" id="clearGalleryBtn">Clear gallery…</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-pane" data-pane="capture">
+          <div class="settings-group">
+            <div class="settings-legend">Browser extension</div>
+            <div class="ext-status" id="extStatus">
+              <span class="dot" id="extDot"></span>
+              <span id="extStatusText">Checking…</span>
+            </div>
+            <button class="btn primary full" id="setupExtBtn">Set up the extension</button>
+            <div class="hint-inline">
+              Images not showing up? Open a NovelAI tab, then click the extension's
+              toolbar icon and use <strong>Import NovelAI history now</strong>. The
+              Diagnostics section there shows exactly what it can and can't see.
+            </div>
+          </div>
+
+          <div class="settings-group">
+            <div class="settings-legend">What the browser extension saves</div>
+            <div id="captureModes"></div>
+            <div id="interceptSwitch"></div>
+          </div>
+        </section>
+
+        <section class="settings-pane" data-pane="about">
+          <div class="settings-group">
+            <div class="settings-legend">This build</div>
+            <div class="about-row">
+              <img class="about-mark" src="appicon.png" alt="" />
+              <div class="about-text">
+                <div class="about-name">NovelAI Gallery</div>
+                <div class="about-version" id="aboutVersion">Build …</div>
               </div>
             </div>
-            <button class="btn danger" id="clearGalleryBtn">Clear gallery…</button>
+            <div class="about-note">
+              Everything stays on this PC. Updates are the one thing that
+              reaches the internet, and only to
+              <a id="aboutRepo" target="_blank" rel="noopener">the project's releases page</a>.
+            </div>
           </div>
-        </div>
-       </div>
+
+          <div class="settings-group">
+            <div class="settings-legend">Updates</div>
+            <div class="update-row">
+              <button class="btn" id="checkUpdateBtn">Check for updates</button>
+              <span class="update-status" id="updateStatus"></span>
+            </div>
+            <div id="autoUpdateSwitch"></div>
+          </div>
+        </section>
 
       </div>
     </div>
@@ -303,6 +356,58 @@
     </div>
   </div>
 
+  <!-- Update prompt: a quiet card in the corner, not a modal. Seeing a new
+       build is not urgent enough to interrupt what someone was doing. -->
+  <div class="update-toast" id="updateToast" hidden>
+    <div class="update-toast-head">
+      <span class="update-toast-spark" aria-hidden="true">↑</span>
+      <div class="update-toast-title" id="updateToastTitle">An update is available</div>
+      <button class="btn icon-only" id="updateToastClose" aria-label="Not now">×</button>
+    </div>
+    <div class="update-toast-body" id="updateToastBody"></div>
+    <div class="update-toast-foot">
+      <button class="btn" id="updateToastLater">Not now</button>
+      <button class="btn primary" id="updateToastGo">Update</button>
+    </div>
+  </div>
+
+  <!-- Installing: this one is modal on purpose, because the app is about
+       to close itself and replacing files under a live window is not
+       something to do while someone is mid-click. -->
+  <div id="updateModal" class="modal" hidden>
+    <div class="modal-panel update-panel">
+      <div class="update-stage" id="updateStage">
+        <div class="update-spinner" id="updateSpinner"></div>
+        <div class="update-headline" id="updateHeadline">Downloading update…</div>
+        <div class="update-sub" id="updateSub"></div>
+        <div class="update-bar"><div class="update-bar-fill" id="updateBarFill"></div></div>
+        <div class="update-note">The app will close and reopen by itself once this is done.</div>
+        <div class="update-actions" id="updateActions">
+          <button class="btn" id="updateCancel">Continue in background</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- What's new, shown once after an update has been installed. -->
+  <div id="welcomeModal" class="modal" hidden>
+    <div class="modal-panel welcome-panel">
+      <div class="welcome-head">
+        <img class="welcome-mark" src="appicon.png" alt="" />
+        <div>
+          <div class="welcome-title" id="welcomeTitle">You're up to date</div>
+          <div class="welcome-sub" id="welcomeSub"></div>
+        </div>
+      </div>
+      <div class="welcome-body" id="welcomeBody"></div>
+      <div class="welcome-foot">
+        <a class="btn ghost" id="welcomeLink" target="_blank" rel="noopener">View on GitHub</a>
+        <div class="spacer"></div>
+        <button class="btn primary" id="welcomeDone">Get started</button>
+      </div>
+    </div>
+  </div>
+
   <div class="dropzone" id="dropzone" hidden>
     <div class="dropzone-inner">
       <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -323,6 +428,24 @@
         <div class="confirm-actions">
           <button class="btn" id="confirmCancel">Cancel</button>
           <button class="btn danger solid" id="confirmOk">Delete</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Naming things: new folders, renames, folder tags. Deliberately not
+       window.prompt, which draws an operating-system box that ignores the
+       theme entirely and can't show a hint or an inline error. -->
+  <div id="askModal" class="modal" hidden>
+    <div class="modal-panel ask">
+      <div class="modal-body">
+        <div class="ask-title" id="askTitle"></div>
+        <div class="ask-sub" id="askSub"></div>
+        <input class="ask-input" id="askInput" type="text" spellcheck="false" autocomplete="off" />
+        <div class="ask-error" id="askError" hidden></div>
+        <div class="ask-actions">
+          <button class="btn" id="askCancel">Cancel</button>
+          <button class="btn primary" id="askOk">Create</button>
         </div>
       </div>
     </div>
