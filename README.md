@@ -1,10 +1,10 @@
-# NovelAI Gallery
+# NovelAI Tools
 
 A local gallery for your NovelAI images and their prompts. Everything stays on
 your PC — a small Windows app plus a browser extension that feeds it.
 
 <!-- Add a screenshot at docs/screenshot.png and uncomment:
-![NovelAI Gallery](docs/screenshot.png)
+![NovelAI Tools](docs/screenshot.png)
 -->
 <img width="1166" height="739" alt="Screenshot 2026-08-24 170221" src="https://github.com/user-attachments/assets/080266fb-df7d-40fc-b558-057b59e6f5c5" />
 
