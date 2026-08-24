@@ -16,7 +16,7 @@ SetCompressor /SOLID lzma
 ; shortcuts, instead of leaving a second copy behind under the old name.
 !define OLD_NAME     "NovelAI Gallery"
 !define OLD_EXE      "NovelAI Gallery.exe"
-!define APP_VERSION  "1.1"
+!define APP_VERSION  "1.2.0"
 ; Unchanged on purpose: this is how an existing install is found, so
 ; renaming it would install a second copy alongside the first.
 !define APP_KEY      "NovelAIGallery"

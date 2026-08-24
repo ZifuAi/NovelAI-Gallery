@@ -111,7 +111,8 @@ const el = {};
   'inspectorToggle', 'inspectorClose', 'settingsBtn', 'settingsModal', 'settingsClose',
   'darkThemes', 'lightThemes', 'captureModes', 'metaViews', 'interceptSwitch',
   'nsfwSwitch', 'settingsTabs', 'tagManager', 'aboutVersion', 'checkUpdateBtn',
-  'updateStatus', 'autoUpdateSwitch', 'aboutRepo',
+  'updateStatus', 'autoUpdateSwitch', 'aboutRepo', 'installUpdateBtn',
+  'installLatestBtn',
   'updateToast', 'updateToastTitle', 'updateToastBody', 'updateToastClose',
   'updateToastLater', 'updateToastGo',
   'updateModal', 'updateStage', 'updateSpinner', 'updateHeadline', 'updateSub',
@@ -129,7 +130,7 @@ const el = {};
   'bulkFolderBtn', 'bulkFolderMenu', 'bulkDelete', 'bulkClose',
   'clearGalleryBtn', 'clearCount',
   'confirmModal', 'confirmTitle', 'confirmBody', 'confirmOk', 'confirmCancel',
-  'toolTabs', 'toolPrompt',
+  'toolTabs', 'toolPrompt', 'toolGenerate', 'toolsSettingsBtn',
   'askModal', 'askTitle', 'askSub', 'askInput', 'askError', 'askOk', 'askCancel',
 ].forEach((id) => { el[id] = $(id); });
 el.app = document.getElementById('app');
@@ -520,7 +521,58 @@ function renderSettings() {
   renderInterceptSwitch(el.interceptSwitch);
   renderNSFWSwitch(el.nsfwSwitch);
   renderTagManager(el.tagManager);
+  renderNaiToken();
   renderAbout();
+}
+
+/* The NovelAI API token. It lives here rather than on the Image Generation
+   screen because it is a once-ever thing, and the app never reads it back -
+   only whether one is set. */
+async function renderNaiToken() {
+  const input = document.getElementById('setToken');
+  if (!input) return;
+
+  const paint = async () => {
+    let info = null;
+    try {
+      info = await fetch('/api/nai/token').then((r) => r.json());
+    } catch (e) { /* treated as not set */ }
+    const set = !!info?.present;
+    input.value = '';
+    input.placeholder = set
+      ? 'A token is saved — paste a new one to replace it'
+      : 'Paste your persistent API token';
+    document.getElementById('setTokenProtection').textContent =
+      info?.protection || 'on this PC';
+    document.getElementById('setTokenState').textContent = set
+      ? 'A token is saved. Image Generation is ready to use.'
+      : 'No token saved yet, so Image Generation can’t reach NovelAI.';
+    if (typeof genRefreshToken === 'function') genRefreshToken();
+    // A new token means a new balance to read.
+    if (typeof genRefreshAnlas === 'function') genRefreshAnlas();
+  };
+
+  const save = document.getElementById('setTokenSave');
+  const clear = document.getElementById('setTokenClear');
+  // renderSettings runs every time the dialog opens, so the handlers are
+  // replaced rather than stacked.
+  save.onclick = async () => {
+    const token = input.value.trim();
+    if (!token) return toast('Paste a token first');
+    await fetch('/api/nai/token', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    await paint();
+    toast('Token saved');
+  };
+  clear.onclick = async () => {
+    await fetch('/api/nai/token', { method: 'DELETE' });
+    await paint();
+    toast('Token forgotten');
+  };
+
+  await paint();
 }
 
 // ---------------------------------------------------------------- storage
@@ -693,6 +745,113 @@ async function renderExtensionSteps(container) {
   }
 }
 
+/* The first-run guide to getting a NovelAI API token in.
+ *
+ * This is the step that used to be "install the browser extension". The app
+ * generates images itself now, so the token is what makes it work at all,
+ * and the extension is only needed by people who would rather generate on
+ * novelai.net - which is a choice, not the way in.
+ *
+ * It is its own panel rather than a link to Settings because a first run
+ * that ends with "now go and find this somewhere else" is not a setup
+ * guide. The field, the warnings and the state are all here. */
+async function renderTokenSetup(container) {
+  container.innerHTML = `
+    <div class="steps">
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-text">
+          Sign in at <strong>novelai.net</strong> with a subscription that can
+          generate images.
+          <div class="sub">Image generation is a paid NovelAI feature; the app
+            can't do it without an account that has it.</div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-text">
+          Open <strong>Account Settings</strong>, then
+          <strong>Account</strong>, and click
+          <strong>Get Persistent API Token</strong>.
+          <div class="sub">NovelAI shows the token once. Copy it before you
+            close the box.</div>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-text">
+          Paste it here.
+          <div class="token-row">
+            <input class="pg-input" id="obToken" type="password" spellcheck="false"
+              autocomplete="off" placeholder="Paste your persistent API token" />
+            <button class="btn primary" id="obTokenSave">Save</button>
+          </div>
+          <div class="sub" id="obTokenState">Checking…</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout warn">
+      <strong>Treat this token like a password.</strong> Anyone who has it can
+      generate on your account and spend your Anlas. Don't paste it into
+      Discord, a forum, a bug report or a screenshot, and don't share it with
+      anyone — including anyone claiming to be support.
+      <div class="sub">
+        It is stored encrypted on this PC and is only ever sent to NovelAI's
+        own servers. The app never displays it again, and never sends it
+        anywhere else.
+      </div>
+    </div>
+
+    <div class="callout">
+      What you generate through this app is generated on your own NovelAI
+      account, so <strong>NovelAI's Terms of Service and content rules apply
+      exactly as they do on their site</strong>. Keep to them — the account
+      that answers for anything generated here is yours.
+    </div>
+
+    <div class="onboard-note">
+      You can skip this and add the token later in
+      <strong>Settings ▸ Image generation</strong>. The gallery works without
+      one; only generating needs it.
+    </div>`;
+
+  const input = container.querySelector('#obToken');
+  const state = container.querySelector('#obTokenState');
+
+  const paint = async () => {
+    let info = null;
+    try {
+      info = await fetch('/api/nai/token').then((r) => r.json());
+    } catch (e) { /* treated as not set */ }
+    input.value = '';
+    state.textContent = info?.present
+      ? 'A token is saved — Image Generation is ready to use.'
+      : 'No token saved yet.';
+    state.dataset.ok = info?.present ? 'yes' : 'no';
+    if (typeof genRefreshToken === 'function') genRefreshToken();
+    if (typeof genRefreshAnlas === 'function') genRefreshAnlas();
+  };
+
+  container.querySelector('#obTokenSave').addEventListener('click', async () => {
+    const token = input.value.trim();
+    if (!token) return toast('Paste a token first');
+    await fetch('/api/nai/token', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    await paint();
+    toast('Token saved — it never leaves this PC except to NovelAI');
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') container.querySelector('#obTokenSave').click();
+  });
+
+  await paint();
+}
+
 /* ---------------------------------------------------------------- setup
 
    First run walks through the things worth deciding once - how it looks,
@@ -709,15 +868,16 @@ const ONBOARD_STEPS = [
       c.innerHTML = `
         <div class="onboard-hero">
           <img class="onboard-mark" src="appicon.png" alt="" />
-          <h1 class="onboard-title">Welcome to NovelAI Gallery</h1>
+          <h1 class="onboard-title">Welcome to NovelAI Tools</h1>
           <p class="onboard-lead">
             This app keeps every image you generate on NovelAI, together with its
             prompt and settings, so you can search and reuse them later.
             Everything stays on this PC.
           </p>
           <div class="onboard-note">
-            Four quick questions, then one real step: installing the browser
-            extension. Without it, nothing arrives here.
+            Three quick questions, then the one step that matters: your
+            NovelAI API token, which is what lets the app generate images
+            for you.
           </div>
         </div>`;
     },
@@ -745,7 +905,8 @@ const ONBOARD_STEPS = [
   {
     id: 'saving',
     title: 'What should be saved?',
-    lead: 'The browser extension does the saving; this is what you want it to catch.',
+    lead: 'This covers what you generate in the app, and anything the browser '
+      + 'extension catches from novelai.net.',
     render(c) {
       c.innerHTML = `<div data-modes></div><div data-switch></div>`;
       renderCaptureModes(c.querySelector('[data-modes]'));
@@ -753,9 +914,16 @@ const ONBOARD_STEPS = [
     },
   },
   {
+    id: 'token',
+    title: 'Set up image generation',
+    lead: 'One paste, and the app can generate on your NovelAI account itself.',
+    render(c) { renderTokenSetup(c); },
+  },
+  {
     id: 'extension',
-    title: 'Install the browser extension',
-    lead: 'This is the part that actually fills the gallery.',
+    title: 'Generating on novelai.net instead — optional',
+    lead: 'Only needed if you would rather use the website and have what you '
+      + 'make there land here too. Skip it if you are generating in the app.',
     render(c) { renderExtensionSteps(c); },
   },
   {
@@ -771,13 +939,13 @@ const ONBOARD_STEPS = [
           </div>
           <h1 class="onboard-title">That's everything</h1>
           <p class="onboard-lead">
-            Generate something on NovelAI and it should land here within a few
-            seconds. If it doesn't, click the extension's toolbar icon — it
-            tells you whether it can see the app and your NovelAI tab.
+            Open <strong>Image Generation</strong>, write a prompt, and what you
+            make lands in your gallery. If you set the extension up as well,
+            anything you generate on novelai.net arrives here too.
           </p>
           <div class="onboard-note">
             Anything you picked here lives in <strong>Settings</strong>, and
-            nothing is final.
+            nothing is final — including the API token.
           </div>
         </div>`;
     },
@@ -1697,6 +1865,14 @@ function imageMenu(ids) {
         setTimeout(() => el.detailsBody.querySelector('#reuseBtn')?.click(), 150);
       },
     });
+    // The other destination for the same prompt: this app's own Generate
+    // tab rather than the website. Both stay available.
+    items.push({
+      label: 'Edit in Generate',
+      detail: 'load into the Generate tab',
+      icon: CTX_ICONS.reuse,
+      action: () => genLoadFrom(record),
+    });
     items.push({
       label: 'Copy prompt',
       icon: CTX_ICONS.copy,
@@ -1980,16 +2156,19 @@ function sectionHtml(section) {
   let count = 0;
   let body = '';
 
-  if (section.characters) {
-    count = section.characters.reduce((n, c) => n + c.tags.length, 0);
-    body = section.characters.map((c) => `
-      <div class="char-block">
-        <div class="char-label"><span class="char-dot"></span>${esc(c.label)}</div>
-        <div class="tags">${c.tags.map((t) => tagChip(t, negative)).join('')}</div>
-      </div>`).join('');
-  } else {
-    count = section.tags.length;
-    body = `<div class="tags">${section.tags.map((t) => tagChip(t, negative)).join('')}</div>`;
+  count = section.tags.length + (section.negative?.tags.length || 0);
+  body = section.tags.length
+    ? `<div class="tags">${section.tags.map((t) => tagChip(t, negative)).join('')}</div>`
+    : '';
+
+  // A subject's own undesired content sits under it rather than in a list
+  // of its own further down, so it is obvious which belongs to which.
+  if (section.negative) {
+    body += `
+      <div class="uc-block">
+        <div class="uc-label">UC</div>
+        <div class="tags">${section.negative.tags.map((t) => tagChip(t, true)).join('')}</div>
+      </div>`;
   }
 
   return `
@@ -2043,14 +2222,20 @@ function specsHtml(m) {
  * prompt straight out than read it as chips.
  */
 function rawSectionHtml(section) {
+  const box = (id, label, text, negative) => `
+    <div class="raw-head">
+      <span class="raw-name${negative ? ' negative' : ''}">${esc(label)}</span>
+      <button class="raw-copy" data-copy="${id}">Copy</button>
+    </div>
+    <textarea class="raw-box" readonly spellcheck="false"
+      data-raw-box="${id}">${esc(text)}</textarea>`;
+
   return `
     <div class="raw-section" data-section="${section.id}">
-      <div class="raw-head">
-        <span class="raw-name${section.kind === 'negative' ? ' negative' : ''}">${esc(section.name)}</span>
-        <button class="raw-copy" data-copy="${section.id}">Copy</button>
-      </div>
-      <textarea class="raw-box" readonly spellcheck="false"
-        data-raw-box="${section.id}">${esc(section.raw)}</textarea>
+      ${section.raw ? box(section.id, section.name, section.raw, false) : ''}
+      ${section.negative
+        ? box(`${section.id}-uc`, `${section.name} — UC`, section.negative.raw, true)
+        : ''}
     </div>`;
 }
 
@@ -2063,11 +2248,23 @@ function renderMetaInto(container, record, { showReuse } = {}) {
   container.innerHTML = `
     ${showReuse ? `
       <div class="reuse-row">
-        <button class="btn primary" id="reuseBtn">Reuse prompt in NovelAI</button>
-        <button class="btn" id="revealBtn" title="Show this file in File Explorer">Open in folder</button>
+        <button class="btn primary reuse-main" id="reuseBtn">Reuse prompt in NovelAI</button>
+        <button class="btn reuse-side" id="editGenBtn" title="Load this prompt into Image Generation">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v6M9 6l3-3 3 3"></path>
+            <path d="M5 12h14v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"></path>
+          </svg>
+          <span>Generate</span>
+        </button>
+        <button class="btn reuse-side" id="revealBtn" title="Show this file in File Explorer">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+          </svg>
+          <span>Folder</span>
+        </button>
       </div>
       <div class="color-row">
-        <span class="color-row-label">Colour</span>
+        <span class="color-row-label">Colour tags</span>
         ${LABEL_COLORS.map(([hex]) => `
           <button class="color-pick${record.color === hex ? ' active' : ''}" data-color="${hex}"
             style="background:${hex}" title="${esc(colorLabelName(hex))}"></button>`).join('')}
@@ -2077,7 +2274,7 @@ function renderMetaInto(container, record, { showReuse } = {}) {
         <input type="checkbox" class="switch-input" id="nsfwToggle"${isNSFW(record) ? ' checked' : ''} />
         <span class="switch-track"><span class="switch-knob"></span></span>
         <span class="nsfw-row-text">
-          Marked as NSFW
+          Mark as NSFW
           <span class="nsfw-row-sub">${state.settings.flagNsfw
             ? (record.nsfwManual === undefined || record.nsfwManual === null
                 ? 'Set automatically from the prompt'
@@ -2154,6 +2351,9 @@ function renderMetaInto(container, record, { showReuse } = {}) {
     nsfwToggle.disabled = !state.settings.flagNsfw;
     nsfwToggle.addEventListener('change', () => setNSFW(record.id, nsfwToggle.checked));
   }
+
+  const editGenBtn = container.querySelector('#editGenBtn');
+  if (editGenBtn) editGenBtn.addEventListener('click', () => genLoadFrom(record));
 
   const revealBtn = container.querySelector('#revealBtn');
   if (revealBtn) revealBtn.addEventListener('click', () => revealImage(record, revealBtn));
@@ -2407,7 +2607,7 @@ window.addEventListener('resize', () => { if (!el.zoomView.hidden && zoom.fit) r
 
 // ---------------------------------------------------------------- lightbox
 
-const DETAILS_W = 384;   // the fixed metadata column, matches styles.css
+const DETAILS_W = 460;   // the fixed metadata column, matches --details-w
 const VIEWER_PAD = 40;   // .viewer padding, both sides
 
 /**
@@ -3226,18 +3426,26 @@ el.refreshBtn.addEventListener('click', () => { load({ reset: true }); loadFolde
 el.inspectorToggle.addEventListener('click', () => toggleInspector());
 el.inspectorClose.addEventListener('click', () => toggleInspector(false));
 
-el.settingsBtn.addEventListener('click', async () => {
+/* Opening settings, optionally on a particular tab, so a button elsewhere
+   can land someone exactly where the thing they need is rather than on
+   whichever tab happened to be open last. */
+async function openSettingsAt(tab) {
   renderSettings();
   refreshExtStatus();
   el.settingsModal.hidden = false;
+  if (tab) {
+    document.querySelector(`.settings-tab[data-tab="${tab}"]`)?.click();
+  }
   try {
     const { total } = await fetch('/api/images?limit=1').then((r) => r.json());
     el.clearCount.textContent = `this gallery (${total} image${total === 1 ? '' : 's'})`;
   } catch (e) {
     el.clearCount.textContent = 'this gallery';
   }
-});
-el.setupExtBtn.addEventListener('click', () => { el.settingsModal.hidden = true; openExtensionSetup(); });
+}
+
+el.toolsSettingsBtn?.addEventListener('click', () => openSettingsAt());
+el.setupExtBtn?.addEventListener('click', () => { el.settingsModal.hidden = true; openExtensionSetup(); });
 el.onboardNext.addEventListener('click', onboardNext);
 el.onboardBack.addEventListener('click', onboardBack);
 el.onboardSkip.addEventListener('click', finishOnboarding);
@@ -3521,10 +3729,18 @@ function paintUpdateProgress(p) {
   el.updateStage.dataset.state = p.state;
 
   if (p.state === 'downloading') {
-    el.updateHeadline.textContent = `Downloading Build ${p.release?.version || ''}`.trim();
-    el.updateSub.textContent = p.total
-      ? `${bytesLabel(p.downloaded)} of ${bytesLabel(p.total)}`
-      : bytesLabel(p.downloaded);
+    // A release published as a zip has the installer taken out of it as a
+    // step of its own. A bar sitting at 100% with nothing said is how a
+    // working update looks stuck.
+    const unpacking = /unpack/i.test(p.message || '');
+    el.updateHeadline.textContent = unpacking
+      ? 'Unpacking the installer…'
+      : `Downloading Build ${p.release?.version || ''}`.trim();
+    el.updateSub.textContent = unpacking
+      ? 'That release is a zip; the installer is being taken out of it.'
+      : (p.total
+        ? `${bytesLabel(p.downloaded)} of ${bytesLabel(p.total)}`
+        : bytesLabel(p.downloaded));
   } else if (p.state === 'installing') {
     el.updateHeadline.textContent = 'Installing…';
     el.updateSub.textContent = 'The app will close and reopen in a moment.';
@@ -3555,6 +3771,13 @@ function startUpdatePolling() {
 
     clearInterval(updatePollTimer);
     updatePollTimer = null;
+
+    // A manual check that finds something should offer it, not just change
+    // a label in a tab the user may have already closed.
+    if (p.state === 'available' && p.release?.newer && p.release?.assetUrl
+        && el.updateToast.hidden && !updateOverlayOpen) {
+      showUpdateToast(p.release);
+    }
 
     if (p.state === 'ready') {
       if (updateOverlayOpen) {
@@ -3608,7 +3831,8 @@ function paintUpdateStatus(p) {
     checking: 'Checking…',
     uptodate: p.message || 'You’re on the latest build',
     available: `Build ${p.release?.version} is available`,
-    downloading: `Downloading… ${Math.round(p.percent || 0)}%`,
+    downloading: /unpack/i.test(p.message || '')
+      ? 'Unpacking…' : `Downloading… ${Math.round(p.percent || 0)}%`,
     ready: 'Downloaded — ready to install',
     installing: 'Installing…',
     error: p.message || 'Something went wrong',
@@ -3617,22 +3841,25 @@ function paintUpdateStatus(p) {
   el.updateStatus.textContent = map[p.state] ?? '';
   el.updateStatus.dataset.state = p.state;
 
-  // When there is something to install, the check button becomes the way
-  // to install it rather than a second, redundant "check again".
-  if (p.state === 'available' && p.release?.assetUrl) {
-    el.checkUpdateBtn.textContent = `Update to Build ${p.release.version}`;
-    el.checkUpdateBtn.classList.add('primary');
-    el.checkUpdateBtn.dataset.action = 'download';
-  } else if (p.state === 'ready') {
-    el.checkUpdateBtn.textContent = 'Install now';
-    el.checkUpdateBtn.classList.add('primary');
-    el.checkUpdateBtn.dataset.action = 'install';
-  } else {
-    el.checkUpdateBtn.textContent = 'Check for updates';
-    el.checkUpdateBtn.classList.remove('primary');
-    el.checkUpdateBtn.dataset.action = 'check';
+  // Two buttons rather than one that changes its mind. A button whose
+  // label rewrites itself is easy to miss entirely - which is exactly what
+  // happened - so checking stays checking, and installing gets its own
+  // button that appears only when there is genuinely something to install.
+  const busy = p.state === 'checking' || p.state === 'downloading' || p.state === 'installing';
+  el.checkUpdateBtn.textContent = 'Check for updates';
+  el.checkUpdateBtn.disabled = busy;
+  if (el.installLatestBtn) el.installLatestBtn.disabled = busy;
+
+  const canInstall = (p.state === 'available' && p.release?.newer && p.release?.assetUrl)
+    || p.state === 'ready';
+  el.installUpdateBtn.hidden = !canInstall;
+  el.installUpdateBtn.disabled = busy;
+  if (canInstall) {
+    el.installUpdateBtn.textContent = p.state === 'ready'
+      ? 'Install now'
+      : `Install Build ${p.release.version}`;
+    el.installUpdateBtn.dataset.action = p.state === 'ready' ? 'install' : 'download';
   }
-  el.checkUpdateBtn.disabled = p.state === 'checking' || p.state === 'downloading' || p.state === 'installing';
 }
 
 function renderAbout() {
@@ -3668,13 +3895,82 @@ function renderAbout() {
 }
 
 el.checkUpdateBtn?.addEventListener('click', async () => {
-  const action = el.checkUpdateBtn.dataset.action || 'check';
-  if (action === 'install') { el.settingsModal.hidden = true; installUpdate(); return; }
-  if (action === 'download') { el.settingsModal.hidden = true; beginUpdate(); return; }
   el.updateStatus.textContent = 'Checking…';
   el.checkUpdateBtn.disabled = true;
   await fetch('/api/update/check', { method: 'POST' }).catch(() => {});
   startUpdatePolling();
+});
+
+el.installUpdateBtn?.addEventListener('click', () => {
+  el.settingsModal.hidden = true;
+  if (el.installUpdateBtn.dataset.action === 'install') installUpdate();
+  else beginUpdate();
+});
+
+/* "Install Latest".
+ *
+ * "Check for updates" only offers something when the published build is
+ * newer than this one, which is right nearly always and useless in the one
+ * case people actually ask about: reinstalling the current release after a
+ * bad install, or picking up a release that was re-cut under the same
+ * number. This takes whatever GitHub is publishing now and installs it,
+ * newer or not. */
+async function waitForCheck(tries = 60) {
+  for (let i = 0; i < tries; i++) {
+    const st = await updateState();
+    const p = st?.progress;
+    if (p && p.state !== 'checking') {
+      return p.state === 'error' ? { error: p.message } : { release: p.release || null };
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return { error: 'GitHub did not answer in time' };
+}
+
+async function installLatestBuild() {
+  hideUpdateToast();
+  openUpdateOverlay();
+  el.updateActions.hidden = false;
+  el.updateHeadline.textContent = 'Finding the latest build…';
+  el.updateSub.textContent = 'Asking GitHub what the newest release is.';
+  el.updateBarFill.style.width = '0%';
+
+  await fetch('/api/update/check', { method: 'POST' }).catch(() => {});
+  const { release, error } = await waitForCheck();
+
+  if (error || !release) {
+    el.updateHeadline.textContent = 'Nothing to install';
+    el.updateSub.textContent = error || 'GitHub has no published release yet.';
+    return;
+  }
+  if (!release.assetUrl) {
+    el.updateHeadline.textContent = `Build ${release.version} has no installer`;
+    el.updateSub.textContent =
+      'That release does not include a setup .exe, so there is nothing to run.';
+    return;
+  }
+
+  el.updateHeadline.textContent = `Downloading Build ${release.version}…`;
+  el.updateSub.textContent = release.version === state.appVersion
+    ? 'Same build you are on — reinstalling it.'
+    : '';
+  await fetch('/api/update/download', { method: 'POST' }).catch(() => {});
+  // The poller installs it once the download reports ready, because the
+  // overlay is open.
+  startUpdatePolling();
+}
+
+el.installLatestBtn?.addEventListener('click', async () => {
+  const ok = await confirmDialog({
+    title: 'Install the latest build',
+    body: `This downloads the newest release from GitHub and installs it, even
+           if it is the same build you are already on. The app will close and
+           reopen. Your gallery, folders and settings are left alone.`,
+    confirmLabel: 'Install latest',
+  });
+  if (!ok) return;
+  el.settingsModal.hidden = true;
+  installLatestBuild();
 });
 
 function clearColorFilter(e) {
@@ -3774,9 +4070,14 @@ function selectTool(name) {
   });
   el.app.hidden = name !== 'gallery';
   el.toolPrompt.hidden = name !== 'prompt';
+  el.toolGenerate.hidden = name !== 'generate';
   // The gallery's layouts are measured in JS, so anything that happened to
   // the window while it was hidden has to be re-measured on the way back.
   if (name === 'gallery') scheduleLayout();
+  // Built on first visit, so opening the app costs nothing if you never
+  // use it.
+  if (name === 'prompt' && typeof pgInit === 'function') pgInit();
+  if (name === 'generate' && typeof genInit === 'function') genInit();
 }
 
 el.toolTabs?.addEventListener('click', (e) => {

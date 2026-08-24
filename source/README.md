@@ -6,7 +6,6 @@ your PC — a small Windows app plus a browser extension that feeds it.
 <!-- Add a screenshot at docs/screenshot.png and uncomment:
 ![NovelAI Gallery](docs/screenshot.png)
 -->
-<img width="1166" height="739" alt="Screenshot 2026-08-24 170221" src="https://github.com/user-attachments/assets/080266fb-df7d-40fc-b558-057b59e6f5c5" />
 
 ## Features
 
@@ -85,7 +84,13 @@ in that popup gives you something to paste into an issue.
 ## Building
 
 ```bash
-cd app && ./build.sh
+cd app && ./build.sh          # needs Go 1.24+; makensis for the installer
+./tests/run.sh                # Go tests + the browser suites
 ```
 
-Needs Go 1.24+. Add `makensis` for the installer.
+## More
+
+- [`docs/MANUAL.md`](docs/MANUAL.md) — every feature in detail, and how the
+  capture strategies work
+- [`docs/HANDOFF.md`](docs/HANDOFF.md) — project state and what is next
+- [`CLAUDE.md`](CLAUDE.md) — conventions and the traps worth knowing

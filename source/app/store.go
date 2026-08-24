@@ -1015,3 +1015,43 @@ func (s *Store) MarkUpdateChecked(today string) {
 	s.settings.LastUpdateCheck = today
 	s.saveSettings()
 }
+
+// FillMissingMeta writes prompt details onto a record that arrived without
+// them.
+//
+// A captured image carries its prompt inside the PNG, which is where all of
+// this normally comes from. An image generated through the API should too -
+// but if it ever arrives without, the app already knows exactly what it
+// asked for, and using that beats filing away a picture with no prompt that
+// search can never find again.
+func (s *Store) FillMissingMeta(id, prompt, negative, model string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	r := s.byID[id]
+	if r == nil {
+		return
+	}
+	changed := false
+	if r.Meta.Prompt == "" && prompt != "" {
+		r.Meta.Prompt = prompt
+		changed = true
+	}
+	if r.Meta.NegativePrompt == "" && negative != "" {
+		r.Meta.NegativePrompt = negative
+		changed = true
+	}
+	if r.Meta.Model == "" && model != "" {
+		r.Meta.Model = model
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	// The search text is memoised per record, so it has to be invalidated
+	// or the new prompt would never be found.
+	r.searchCache = ""
+	r.searchGen = 0
+	r.NSFWAuto = classifyNSFW(r.Meta)
+	s.saveIndex()
+}

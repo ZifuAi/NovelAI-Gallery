@@ -69,7 +69,7 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
     await page.locator('.card').count() === 1);
   await page.locator('#viewMenu [data-color=""]').click();
   await sleep(700);
-  check('choosing it again clears the filter', await page.locator('.card').count() === 6);
+  check('choosing it again clears the filter', await page.locator('.card').count() === 7);
 
   // --- 2. the NSFW toggle -----------------------------------------------
   const explicit = imgs.find((i) => i.nsfwAuto);
@@ -102,7 +102,7 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
 
   // The switches in Settings must not have regressed while fixing this.
   await page.keyboard.press('Escape'); await sleep(400);
-  await page.click('#settingsBtn'); await sleep(400);
+  await page.click('#toolsSettingsBtn'); await sleep(400);
   await page.click('.settings-tab[data-tab="library"]'); await sleep(400);
   const nsfwSetting = page.locator('#nsfwSwitch .switch-input');
   const settingKnob = () => page.locator('#nsfwSwitch .switch-knob').evaluate((n) => getComputedStyle(n).transform);
@@ -150,7 +150,7 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
       await page.locator(`${cardSel} .nsfw-cover`).count() === 0 &&
       await page.locator(`${cardSel} .nsfw-hide`).count() === 1);
 
-    await page.click('#settingsBtn'); await sleep(400);
+    await page.click('#toolsSettingsBtn'); await sleep(400);
   }
 
   // --- 3. the settings window holds one size ----------------------------
@@ -186,9 +186,67 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
   const clearBtn = await page.locator('#clearGalleryBtn').isVisible();
   check('a tall pane scrolls rather than being cut off', reach.scrolled && clearBtn);
 
+  // --- first-run setup teaches the API token, not the extension ---------
+  //
+  // The app generates images itself now. The token is what makes that work,
+  // so it is the step first-run walks people through; the extension is for
+  // people who would rather generate on the website and is offered as such.
+  await page.keyboard.press('Escape'); await sleep(300);
+  await fetch(`${BASE}api/nai/token`, { method: 'DELETE' });
+  {
+    const s = await fetch(`${BASE}api/settings`).then(r => r.json());
+    await fetch(`${BASE}api/settings`, { method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...s, onboarded: false }) });
+  }
+  await page.reload(); await page.waitForSelector('.card'); await sleep(900);
+  check('first run opens the setup guide',
+    await page.locator('#onboardModal').isVisible());
+
+  // Walk to the token step the way a person would.
+  let hops = 0;
+  while (hops < 8 && !(await page.locator('#obToken').count())) {
+    await page.click('#onboardNext'); await sleep(500);
+    hops++;
+  }
+  check('the setup guide reaches an API token step',
+    await page.locator('#obToken').count() === 1);
+  const guide = await page.locator('#onboardBody').innerText();
+  check('it says where to get the token',
+    /Persistent API Token/i.test(guide), guide.slice(0, 200));
+  check('it warns not to share it',
+    /don.t share|like a password/i.test(guide));
+  check('and points at NovelAI\'s terms',
+    /Terms of Service/i.test(guide));
+  check('and says where it is kept',
+    /encrypted on this PC/i.test(guide));
+
+  await page.fill('#obToken', 'pst-onboarding-token');
+  await page.click('#obTokenSave'); await sleep(900);
+  const saved = await fetch(`${BASE}api/nai/token`).then(r => r.json());
+  check('pasting a token there actually saves it', saved.present === true,
+    JSON.stringify(saved));
+  check('and the step says so',
+    /ready to use/i.test(await page.locator('#obTokenState').textContent()));
+  check('without the token being readable back out',
+    !JSON.stringify(saved).includes('pst-onboarding-token'));
+
+  // The extension is still there, and still says what it is for.
+  await page.click('#onboardNext'); await sleep(700);
+  const ext = await page.locator('#onboardBody').innerText();
+  check('the extension step is kept for people using the website',
+    /novelai\.net/i.test(ext) && /optional/i.test(ext), ext.slice(0, 200));
+  check('and it still explains how to load it',
+    /Load unpacked/i.test(ext));
+
+  await page.click('#onboardSkip'); await sleep(700);
+  check('the guide can be left', await page.locator('#onboardModal').isHidden());
+
   check('no page errors', errors.length === 0, errors.join('; '));
 
-  // Screenshots for a look.
+  // Screenshots for a look. The setup guide above reloaded the page, so
+  // Settings has to be opened again rather than assumed still open.
+  await page.click('#toolsSettingsBtn'); await sleep(500);
   await page.click('.settings-tab[data-tab="appearance"]'); await sleep(400);
   await page.screenshot({ path: path.join(SHOTS, 'fix-settings-appearance.png') });
   await page.click('.settings-tab[data-tab="about"]'); await sleep(400);

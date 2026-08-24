@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 )
 
-const appVersion = "1.1"
+const appVersion = "1.2.0"
 const appName = "NovelAI Tools"
 
 // The folder the library lives in keeps its original name. Renaming it
@@ -114,11 +114,20 @@ func main() {
 		fatal("Could not open your gallery storage:\n" + err.Error())
 	}
 
+	// Tests point this at a stand-in for NovelAI so the whole flow can be
+	// driven without a token, an account, or spending anything. It is never
+	// set in a shipped build.
+	naiOverride := os.Getenv("NOVELAI_GALLERY_NAI_ENDPOINT")
+
 	srv := &Server{
-		store:   store,
-		app:     app,
-		updater: NewUpdater(data),
-		reuseCh: make(chan string, 1),
+		store:       store,
+		app:         app,
+		updater:     NewUpdater(data),
+		tokens:      newTokenStore(data),
+		pending:     newPendingStore(data),
+		naiEndpoint: naiOverride,
+		naiUserData: os.Getenv("NOVELAI_GALLERY_NAI_USERDATA"),
+		reuseCh:     make(chan string, 1),
 	}
 	ln, err := srv.Listen()
 	if err != nil {

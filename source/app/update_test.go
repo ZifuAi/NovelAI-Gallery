@@ -1,11 +1,16 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -293,5 +298,274 @@ func TestSavingSettingsKeepsTheUpdateBookkeeping(t *testing.T) {
 	}
 	if !store.CheckedUpdatesToday("2026-01-01") {
 		t.Error("the stored day should still count as checked")
+	}
+}
+
+// The whole update path, end to end, against a stand-in for GitHub serving
+// the real installer.
+//
+// Everything up to launching the installer is exercised here: the check
+// notices the newer build, the download writes the actual bytes, and what
+// lands on disk is byte-identical to what was served. Only the final
+// CreateProcess is Windows-only, and its flags are covered by
+// TestInstallerFlagsMatchTheInstallerScript.
+func TestFullUpdateFlowAgainstARealInstaller(t *testing.T) {
+	installer, err := os.ReadFile("NovelAI-Gallery-Setup.exe")
+	if err != nil {
+		t.Skip("no built installer to serve; run build.sh first")
+	}
+	if len(installer) < 100000 {
+		t.Fatalf("that installer is only %d bytes; something is wrong with the build", len(installer))
+	}
+
+	var served int
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".exe") {
+			served++
+			w.Header().Set("Content-Length", strconv.Itoa(len(installer)))
+			w.Write(installer)
+			return
+		}
+		w.Write([]byte(`{
+			"tag_name": "v99.0",
+			"name": "Build 99.0",
+			"body": "### Added\n- the thing",
+			"html_url": "https://example.invalid/r/99",
+			"assets": [{"name":"NovelAI-Gallery-Setup.exe","size":` +
+			strconv.Itoa(len(installer)) + `,"browser_download_url":"` + baseOf(r) + `/asset.exe"}]
+		}`))
+	}))
+	defer gh.Close()
+
+	dir := t.TempDir()
+	u := NewUpdater(dir)
+	u.api = gh.URL
+
+	rel, err := u.Check()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rel.Newer {
+		t.Fatalf("99.0 should be newer than the running build %s", appVersion)
+	}
+	if rel.AssetSize != int64(len(installer)) {
+		t.Errorf("asset size = %d, want %d", rel.AssetSize, len(installer))
+	}
+
+	if err := u.Download(rel); err != nil {
+		t.Fatal(err)
+	}
+	if served != 1 {
+		t.Errorf("the installer was fetched %d times, want once", served)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, "updates", "NovelAI-Gallery-Setup.exe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, installer) {
+		t.Fatalf("what was downloaded (%d bytes) does not match what was served (%d)",
+			len(got), len(installer))
+	}
+	// A Windows executable, not an error page saved under the wrong name.
+	if len(got) < 2 || got[0] != 'M' || got[1] != 'Z' {
+		t.Error("the downloaded file is not a Windows executable")
+	}
+
+	if p := u.Progress(); p.State != "ready" || p.Percent != 100 {
+		t.Errorf("progress = %+v, want ready at 100%%", p)
+	}
+
+	// The changelog has to survive the restart the installer is about to
+	// cause; that is the only reason it is written to disk at all.
+	if _, err := os.Stat(filepath.Join(dir, "pending-update.json")); err != nil {
+		t.Error("no pending release was recorded; the what's-new screen would never appear")
+	}
+}
+
+func baseOf(r *http.Request) string { return "http://" + r.Host }
+
+// --- releases published as a zip ---------------------------------------
+
+// zipWith builds an in-memory zip holding the named files.
+func zipWith(t *testing.T, files map[string][]byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	// Sorted, so the archive is the same every run and a test that depends
+	// on entry order would fail honestly rather than intermittently.
+	names := make([]string, 0, len(files))
+	for n := range files {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		w, err := zw.Create(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(files[n]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestPickInstallerFromABundle(t *testing.T) {
+	cases := []struct {
+		name  string
+		files []string
+		want  string
+	}{
+		{
+			"the bundle as it is actually published",
+			[]string{"NovelAI-Tools-Setup.exe", "source/app/main.go", "extension/background.js"},
+			"NovelAI-Tools-Setup.exe",
+		},
+		{
+			"inside a folder, as most zip tools produce",
+			[]string{"NovelAI-Tools-1.2.0/NovelAI-Tools-Setup.exe", "NovelAI-Tools-1.2.0/README.md"},
+			"NovelAI-Tools-1.2.0/NovelAI-Tools-Setup.exe",
+		},
+		{
+			"the uninstaller is never the answer",
+			[]string{"app/Uninstall.exe", "app/NovelAI-Tools-Setup.exe"},
+			"app/NovelAI-Tools-Setup.exe",
+		},
+		{
+			"nothing runnable in there at all",
+			[]string{"source/app/main.go", "README.md"},
+			"",
+		},
+	}
+	for _, c := range cases {
+		if got := pickInstaller(c.files); got != c.want {
+			t.Errorf("%s: picked %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// A release published as a zip is the normal case for this project: the
+// bundle carries the installer, the source and the extension together. The
+// updater used to look for an .exe asset, find none, and offer an update it
+// could never install.
+func TestUpdateFromAZipRelease(t *testing.T) {
+	installer := append([]byte{'M', 'Z'}, bytes.Repeat([]byte("installer"), 5000)...)
+	bundle := zipWith(t, map[string][]byte{
+		"NovelAI-Tools-Setup.exe": installer,
+		"source/app/main.go":      []byte("package main\n"),
+		"extension/manifest.json": []byte("{}"),
+	})
+
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".zip") {
+			w.Header().Set("Content-Length", strconv.Itoa(len(bundle)))
+			w.Write(bundle)
+			return
+		}
+		w.Write([]byte(`{
+			"tag_name": "v99.0",
+			"name": "Build 99.0",
+			"body": "notes",
+			"html_url": "https://example.invalid/r/99",
+			"assets": [{"name":"NovelAI-Tools-99.0.zip","size":` +
+			strconv.Itoa(len(bundle)) + `,"browser_download_url":"` + baseOf(r) + `/asset.zip"}]
+		}`))
+	}))
+	defer gh.Close()
+
+	dir := t.TempDir()
+	u := NewUpdater(dir)
+	u.api = gh.URL
+
+	rel, err := u.Check()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel.AssetURL == "" {
+		t.Fatal("a zip release was treated as having nothing to install")
+	}
+	if !strings.HasSuffix(rel.AssetName, ".zip") {
+		t.Fatalf("asset = %q, want the zip", rel.AssetName)
+	}
+
+	if err := u.Download(rel); err != nil {
+		t.Fatal(err)
+	}
+	if p := u.Progress(); p.State != "ready" {
+		t.Fatalf("progress = %+v, want ready", p)
+	}
+
+	u.mu.Lock()
+	got := u.installerPath
+	u.mu.Unlock()
+	if !strings.HasSuffix(strings.ToLower(got), ".exe") {
+		t.Fatalf("installer path = %q; a zip cannot be run", got)
+	}
+	b, err := os.ReadFile(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(b, installer) {
+		t.Fatalf("the unpacked installer is %d bytes, want %d", len(b), len(installer))
+	}
+	// Only the installer comes out. The source tree is not written to
+	// anyone's disk to get at one file inside it.
+	if _, err := os.Stat(filepath.Join(dir, "updates", "unpacked", "source")); err == nil {
+		t.Error("the whole bundle was unpacked, not just the installer")
+	}
+}
+
+func TestZipWithNoInstallerSaysSo(t *testing.T) {
+	bundle := zipWith(t, map[string][]byte{"source/app/main.go": []byte("package main\n")})
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "b.zip")
+	if err := os.WriteFile(zipPath, bundle, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := extractInstaller(zipPath, filepath.Join(dir, "unpacked"))
+	if err == nil {
+		t.Fatal("a zip with no installer in it was accepted")
+	}
+	if !strings.Contains(err.Error(), "installer") {
+		t.Errorf("error = %q, which does not say what is wrong", err)
+	}
+}
+
+// A crafted entry name must not be able to write outside the directory it
+// was given.
+func TestExtractRefusesToEscapeItsDirectory(t *testing.T) {
+	bundle := zipWith(t, map[string][]byte{
+		"../../../escaped-setup.exe": append([]byte{'M', 'Z'}, []byte("x")...),
+	})
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "b.zip")
+	if err := os.WriteFile(zipPath, bundle, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := extractInstaller(zipPath, filepath.Join(dir, "unpacked"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(out) != filepath.Join(dir, "unpacked") {
+		t.Fatalf("wrote to %q, outside the directory it was given", out)
+	}
+}
+
+// Install must refuse anything that is not an executable, whatever left it
+// on disk.
+func TestInstallRefusesAZip(t *testing.T) {
+	dir := t.TempDir()
+	zipPath := filepath.Join(dir, "b.zip")
+	if err := os.WriteFile(zipPath, []byte("PK"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	u := NewUpdater(dir)
+	u.installerPath = zipPath
+	if err := u.Install(); err == nil {
+		t.Fatal("a zip was handed to the operating system to run")
 	}
 }

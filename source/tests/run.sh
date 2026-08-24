@@ -34,7 +34,7 @@ mkdir -p tests/screenshots
 
 SUITES=("${@:-}")
 if [ -z "${SUITES[0]:-}" ]; then
-  SUITES=(update regression folderui fixes nsfwtoggle)
+  SUITES=(update regression folderui fixes nsfwtoggle promptgen generate)
 fi
 
 failed=0

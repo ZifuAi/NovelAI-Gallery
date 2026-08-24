@@ -1,12 +1,15 @@
 package main
 
 import (
+	"archive/zip"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -223,13 +226,27 @@ func (u *Updater) checkAt(endpoint string) (*Release, error) {
 		Notes:   raw.Body,
 		URL:     raw.HTMLURL,
 	}
-	// Prefer a .exe asset; that's the installer.
+	// A bare .exe is the installer and needs nothing doing to it. A .zip is
+	// the other way releases here are published - the installer alongside
+	// the source and the extension - and the installer has to be dug back
+	// out of it before it can be run. Either is accepted, the .exe first
+	// because it is one less step that can fail.
 	for _, a := range raw.Assets {
 		if strings.HasSuffix(strings.ToLower(a.Name), ".exe") {
 			rel.AssetURL = a.URL
 			rel.AssetName = a.Name
 			rel.AssetSize = a.Size
 			break
+		}
+	}
+	if rel.AssetURL == "" {
+		for _, a := range raw.Assets {
+			if strings.HasSuffix(strings.ToLower(a.Name), ".zip") {
+				rel.AssetURL = a.URL
+				rel.AssetName = a.Name
+				rel.AssetSize = a.Size
+				break
+			}
 		}
 	}
 	rel.Newer = compareVersions(rel.Version, appVersion) > 0
@@ -329,8 +346,26 @@ func (u *Updater) Download(rel *Release) error {
 		return err
 	}
 
+	// A zip is not something that can be run. The installer inside it is,
+	// so it comes out here rather than at the moment someone presses
+	// Install: a release packaged the wrong way should fail while it is
+	// still downloading, not after the window has said "ready".
+	installer := target
+	if strings.HasSuffix(strings.ToLower(target), ".zip") {
+		u.set(UpdateProgress{
+			State: "downloading", Message: "Unpacking…",
+			Percent: 100, Downloaded: done, Total: total, Release: rel,
+		})
+		found, xerr := extractInstaller(target, filepath.Join(dir, "unpacked"))
+		if xerr != nil {
+			u.set(UpdateProgress{State: "error", Message: xerr.Error(), Release: rel})
+			return xerr
+		}
+		installer = found
+	}
+
 	u.mu.Lock()
-	u.installerPath = target
+	u.installerPath = installer
 	u.mu.Unlock()
 
 	// Remember what's being installed so the changelog can be shown once
@@ -342,6 +377,115 @@ func (u *Updater) Download(rel *Release) error {
 		Percent: 100, Downloaded: done, Total: total, Release: rel,
 	})
 	return nil
+}
+
+// --- getting the installer out of a zip --------------------------------
+
+// The largest thing worth unpacking. An installer is a few megabytes; a
+// number far above that is a runaway or a hostile archive, and either way
+// not something to write to someone's disk.
+const maxInstallerBytes = 512 << 20
+
+// pickInstaller chooses the installer from a zip's contents.
+//
+// The bundles published for this app hold the setup .exe next to the source
+// and the extension, so "the only .exe" is not a safe assumption and
+// neither is "the first one". A name that says setup or install wins;
+// failing that, the biggest .exe, an installer being far larger than
+// anything else that might be shipped beside it. Uninstall.exe is excluded
+// by name, because it is an .exe that says "install" and running it would
+// remove the app rather than update it.
+func pickInstaller(names []string) string {
+	best, bestScore := "", -1
+	for _, n := range names {
+		low := strings.ToLower(path.Base(n))
+		if !strings.HasSuffix(low, ".exe") {
+			continue
+		}
+		if strings.HasPrefix(low, "uninstall") || strings.Contains(low, "uninst") {
+			continue
+		}
+		score := 0
+		if strings.Contains(low, "setup") || strings.Contains(low, "install") {
+			score = 2
+		} else if strings.Contains(low, "novelai") {
+			score = 1
+		}
+		if score > bestScore {
+			best, bestScore = n, score
+		}
+	}
+	return best
+}
+
+// extractInstaller pulls the installer out of a downloaded zip and returns
+// the path it was written to. Only that one file is unpacked: the rest of
+// the bundle is source and an extension, and writing all of it to someone's
+// disk to reach one file would be rude as well as slow.
+func extractInstaller(zipPath, destDir string) (string, error) {
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return "", fmt.Errorf("the downloaded file is not a readable zip: %w", err)
+	}
+	defer zr.Close()
+
+	names := make([]string, 0, len(zr.File))
+	byName := map[string]*zip.File{}
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		names = append(names, f.Name)
+		byName[f.Name] = f
+	}
+
+	// Sorted, so an archive listing its files in a different order does not
+	// produce a different choice between two equally-named candidates.
+	sort.Strings(names)
+	choice := pickInstaller(names)
+	if choice == "" {
+		return "", fmt.Errorf("that release's zip has no installer in it")
+	}
+	src := byName[choice]
+	if src.UncompressedSize64 > maxInstallerBytes {
+		return "", fmt.Errorf("the installer inside that zip is implausibly large")
+	}
+
+	// Fresh each time: a stale installer from a previous update left lying
+	// around is the kind of thing that gets run by accident.
+	os.RemoveAll(destDir)
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return "", err
+	}
+	// Only the base name is used, so a crafted entry like ../../evil.exe
+	// cannot write outside the directory it was given.
+	out := filepath.Join(destDir, filepath.Base(filepath.FromSlash(choice)))
+
+	rc, err := src.Open()
+	if err != nil {
+		return "", err
+	}
+	defer rc.Close()
+
+	f, err := os.OpenFile(out, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+	if err != nil {
+		return "", err
+	}
+	written, err := io.Copy(f, io.LimitReader(rc, maxInstallerBytes))
+	cerr := f.Close()
+	if err != nil {
+		os.Remove(out)
+		return "", err
+	}
+	if cerr != nil {
+		os.Remove(out)
+		return "", cerr
+	}
+	if written == 0 {
+		os.Remove(out)
+		return "", fmt.Errorf("the installer inside that zip is empty")
+	}
+	return out, nil
 }
 
 // pendingPath holds the release notes between downloading an update and
@@ -380,18 +524,24 @@ func (u *Updater) TakePending() *Release {
 // expected to exit immediately so its files can be replaced.
 func (u *Updater) Install() error {
 	u.mu.Lock()
-	path := u.installerPath
+	exe := u.installerPath
 	u.mu.Unlock()
 
-	if path == "" {
+	if exe == "" {
 		return fmt.Errorf("nothing has been downloaded yet")
 	}
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(exe); err != nil {
 		return fmt.Errorf("the downloaded installer is missing")
+	}
+	// Belt and braces: a zip reaching this point would be handed to the
+	// operating system to run, which does nothing useful and says nothing
+	// helpful about why.
+	if !strings.HasSuffix(strings.ToLower(exe), ".exe") {
+		return fmt.Errorf("what was downloaded is not an installer")
 	}
 
 	u.set(UpdateProgress{State: "installing", Message: "Installing…"})
-	return runInstaller(path)
+	return runInstaller(exe)
 }
 
 // --- driving it from the UI --------------------------------------------

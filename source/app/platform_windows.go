@@ -193,7 +193,7 @@ func fatal(msg string) {
 func runInstaller(path string) error {
 	clean := filepath.Clean(path)
 
-	cmd := exec.Command(clean, "/S", "/RESTART")
+	cmd := exec.Command(clean, installerArgs()...)
 	// Detached: the installer must outlive the process that started it,
 	// since that process is about to disappear.
 	cmd.SysProcAttr = &syscall.SysProcAttr{

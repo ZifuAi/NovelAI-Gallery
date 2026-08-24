@@ -56,72 +56,47 @@ function buildSections(meta) {
   const sections = [];
   const comment = meta?.comment || {};
 
-  // ---- Base (positive) prompt -------------------------------------
+  // Each subject carries its own undesired content, the way NovelAI writes
+  // it: the base prompt has one, and every character has one of their own.
+  // Listing all the prompts and then all the undesired content separately
+  // made you count rows to work out which belonged to which.
+  const pair = (id, name, prompt, negative) => {
+    if (!prompt && !negative) return;
+    sections.push({
+      id,
+      name,
+      kind: 'positive',
+      tags: splitTags(prompt || ''),
+      raw: prompt || '',
+      negative: negative
+        ? { tags: splitTags(negative), raw: negative }
+        : null,
+    });
+  };
+
+  // ---- Base prompt, and the undesired content that goes with it -----
   const v4Base = safeGet(comment, 'v4_prompt.caption.base_caption');
   const basePrompt = v4Base || meta?.prompt || comment.prompt || '';
-  if (basePrompt) {
-    sections.push({
-      id: 'base',
-      name: 'Base prompt',
-      kind: 'positive',
-      tags: splitTags(basePrompt),
-      raw: basePrompt,
-    });
-  }
-
-  // ---- Character prompts -------------------------------------------
-  const charCaptions = safeGet(comment, 'v4_prompt.caption.char_captions');
-  if (Array.isArray(charCaptions) && charCaptions.length > 0) {
-    const characters = charCaptions
-      .map((c, i) => {
-        const text = c?.char_caption || c?.caption || '';
-        return text ? { label: `Character ${i + 1}`, tags: splitTags(text), raw: text } : null;
-      })
-      .filter(Boolean);
-
-    if (characters.length > 0) {
-      sections.push({
-        id: 'characters',
-        name: 'Character prompts',
-        kind: 'positive',
-        characters,
-        raw: characters.map((c) => c.raw).join('\n\n'),
-      });
-    }
-  }
-
-  // ---- Undesired content (negative) --------------------------------
   const v4NegBase = safeGet(comment, 'v4_negative_prompt.caption.base_caption');
-  const negPrompt = v4NegBase || meta?.negativePrompt || comment.uc || '';
-  if (negPrompt) {
-    sections.push({
-      id: 'uc',
-      name: 'Undesired content',
-      kind: 'negative',
-      tags: splitTags(negPrompt),
-      raw: negPrompt,
-    });
-  }
+  const baseNeg = v4NegBase || meta?.negativePrompt || comment.uc || '';
+  pair('base', 'Base prompt', basePrompt, baseNeg);
 
-  // ---- Per-character undesired content ------------------------------
-  const negCharCaptions = safeGet(comment, 'v4_negative_prompt.caption.char_captions');
-  if (Array.isArray(negCharCaptions) && negCharCaptions.length > 0) {
-    const characters = negCharCaptions
-      .map((c, i) => {
-        const text = c?.char_caption || c?.caption || '';
-        return text ? { label: `Character ${i + 1}`, tags: splitTags(text), raw: text } : null;
-      })
-      .filter(Boolean);
+  // ---- One section per character ------------------------------------
+  const charCaptions = safeGet(comment, 'v4_prompt.caption.char_captions') || [];
+  const negCaptions = safeGet(comment, 'v4_negative_prompt.caption.char_captions') || [];
+  const count = Math.max(
+    Array.isArray(charCaptions) ? charCaptions.length : 0,
+    Array.isArray(negCaptions) ? negCaptions.length : 0,
+  );
 
-    if (characters.length > 0) {
-      sections.push({
-        id: 'uc-characters',
-        name: 'Character undesired content',
-        kind: 'negative',
-        characters,
-        raw: characters.map((c) => c.raw).join('\n\n'),
-      });
-    }
+  const textOf = (c) => (typeof c === 'string' ? c : (c?.char_caption || c?.caption || ''));
+  for (let i = 0; i < count; i++) {
+    pair(
+      `char-${i + 1}`,
+      `Character ${i + 1}`,
+      textOf(charCaptions[i]),
+      textOf(negCaptions[i]),
+    );
   }
 
   return sections;

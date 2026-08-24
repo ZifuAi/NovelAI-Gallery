@@ -14,16 +14,22 @@
     <img class="tools-mark" src="appicon.png" alt="" />
     <div class="tools-name">NovelAI Tools</div>
     <div class="tools-tabs">
+      <button class="tool-tab" data-tool="generate" role="tab" aria-selected="false">Image Generation</button>
       <button class="tool-tab active" data-tool="gallery" role="tab" aria-selected="true">Gallery</button>
       <button class="tool-tab" data-tool="prompt" role="tab" aria-selected="false">Prompt Generator</button>
     </div>
     <div class="tools-spacer"></div>
+    <!-- Settings used to live in the gallery's toolbar, which meant it
+         vanished on every other tab. It belongs beside the tabs. -->
+    <button class="btn icon-only" id="toolsSettingsBtn" title="Settings" aria-label="Settings">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.14.6.62 1.05 1.23 1.15H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+    </button>
   </nav>
 
   <div id="app">
-    <div class="brand">
-      <div class="brand-name">Gallery</div>
-    </div>
 
     <header class="topbar">
       <div class="search">
@@ -118,12 +124,8 @@
       </button>
       <input type="file" id="importInput" accept="image/png" multiple hidden />
 
-      <button class="btn icon-only" id="settingsBtn" title="Settings" aria-label="Settings">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="3"></circle>
-          <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.9 19.3a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.7 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.56 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"></path>
-        </svg>
-      </button>
+      <!-- Settings lives in the tool strip now, where every tab can
+           reach it. -->
     </header>
 
     <aside class="sidebar">
@@ -311,6 +313,24 @@
             <div id="captureModes"></div>
             <div id="interceptSwitch"></div>
           </div>
+
+          <div class="settings-group">
+            <div class="settings-legend">NovelAI API token</div>
+            <div class="settings-note">
+              Lets the Image Generation tab generate through NovelAI directly.
+              Get one from NovelAI: <strong>User Settings → Account → Get
+              Persistent API Token</strong>. It is held on this PC
+              (<span id="setTokenProtection">—</span>), sent only to NovelAI,
+              and never shown back to this page.
+            </div>
+            <div class="gen-tokenrow">
+              <input class="pg-input" id="setToken" type="password" spellcheck="false"
+                placeholder="Paste your persistent API token" autocomplete="off" />
+              <button class="btn primary" id="setTokenSave">Save</button>
+              <button class="btn" id="setTokenClear" title="Forget the saved token">Forget</button>
+            </div>
+            <div class="settings-note" id="setTokenState"></div>
+          </div>
         </section>
 
         <section class="settings-pane" data-pane="about">
@@ -319,7 +339,7 @@
             <div class="about-row">
               <img class="about-mark" src="appicon.png" alt="" />
               <div class="about-text">
-                <div class="about-name">NovelAI Gallery</div>
+                <div class="about-name">NovelAI Tools</div>
                 <div class="about-version" id="aboutVersion">Build …</div>
               </div>
             </div>
@@ -334,6 +354,9 @@
             <div class="settings-legend">Updates</div>
             <div class="update-row">
               <button class="btn" id="checkUpdateBtn">Check for updates</button>
+              <button class="btn primary" id="installUpdateBtn" hidden>Install update</button>
+              <button class="btn" id="installLatestBtn"
+                title="Fetch the newest release from GitHub and install it, even if it matches the build you are on">Install Latest</button>
               <span class="update-status" id="updateStatus"></span>
             </div>
             <div id="autoUpdateSwitch"></div>
@@ -451,16 +474,444 @@
 
   <!-- Prompt Generator. Not built yet; this is the shell it will fill. -->
   <section id="toolPrompt" class="tool-pane" hidden>
-    <div class="tool-empty">
-      <div class="tool-empty-title">Prompt Generator</div>
-      <div class="tool-empty-body">
-        Not built yet. It will roll random NovelAI prompts from pools you
-        control — artists, subjects, locations, actions, lighting — with a
-        slider to move between plain tags and natural language, and send
-        the result straight to a NovelAI tab.
+    <div class="wip-banner">
+      <span class="wip-tag">Work in progress</span>
+      <span>Newer than the rest of the app and less exercised — expect rough
+        edges. Nothing here can touch your library.</span>
+    </div>
+    <div class="pg">
+      <!-- Left: what steers a roll -->
+      <div class="pg-steerpane">
+        <div class="pg-bar">
+          <select class="pg-select" id="pgScene" aria-label="Scene"></select>
+          <button class="btn primary" id="pgRoll">Roll everything</button>
+          <button class="btn" id="pgReroll" title="Roll only the buckets you haven't locked">Reroll unlocked</button>
+          <div class="topbar-spacer"></div>
+          <button class="btn" id="pgSave">Save preset</button>
+          <button class="btn" id="pgClear">Clear</button>
+        </div>
+
+        <div class="pg-card">
+          <div class="pg-card-head">
+            <span class="pg-card-title">Steer the roll</span>
+          </div>
+          <div class="pg-steer">
+            <label class="pg-field">
+              <span class="pg-label">Must include</span>
+              <input class="pg-input" id="pgMust" placeholder="tags, always added — e.g. twintails, red scarf" spellcheck="false" />
+            </label>
+            <label class="pg-field">
+              <span class="pg-label">Never include</span>
+              <input class="pg-input" id="pgBan" placeholder="tags to keep out of every roll" spellcheck="false" />
+            </label>
+          </div>
+        </div>
+
+        <div class="pg-card">
+          <div class="pg-card-head">
+            <span class="pg-card-title">Tags or prose</span>
+            <span class="pg-mixread" id="pgMixRead"></span>
+          </div>
+          <input type="range" class="pg-range" id="pgMix" min="0" max="100" step="5" value="0" aria-label="Tags to natural language" />
+          <div class="pg-mixhint">
+            At 0 every bucket is comma-separated Danbooru tags. Turning it up
+            rewrites the descriptive buckets as a sentence and leaves artists,
+            character count and composition as tags, which is what V4.5
+            responds to best.
+          </div>
+        </div>
+
+        <div class="pg-card">
+          <div class="pg-card-head">
+            <span class="pg-card-title">Character from a series</span>
+            <label class="pg-inline"><input type="checkbox" id="pgCharOn" /> <span>Include</span></label>
+          </div>
+          <div class="pg-charrow">
+            <select class="pg-select" id="pgSeries" aria-label="Series"></select>
+            <select class="pg-select" id="pgCharacter" aria-label="Character"></select>
+            <button class="btn" id="pgCharRandom">Random</button>
+          </div>
+          <div class="pg-mixhint">
+            A character tag carries its own hair, eyes and outfit, so turning
+            this on also switches off the buckets that would argue with it.
+          </div>
+        </div>
+
+        <div class="pg-card">
+          <div class="pg-card-head">
+            <span class="pg-card-title">Quality tags</span>
+            <label class="pg-inline"><input type="checkbox" id="pgQuality" checked /> <span>Add the quality prefix</span></label>
+          </div>
+          <input class="pg-input mono" id="pgQualityText" spellcheck="false" />
+        </div>
+
       </div>
+
+      <!-- Middle: the pools -->
+      <div class="pg-main">
+        <div class="pg-buckets" id="pgBuckets"></div>
+      </div>
+
+      <!-- Result column -->
+      <aside class="pg-side">
+        <div class="pg-card sticky">
+          <div class="pg-card-head">
+            <span class="pg-card-title">Prompt</span>
+            <button class="btn" id="pgCopy">Copy</button>
+          </div>
+          <pre class="pg-out" id="pgOut"></pre>
+          <div class="pg-card-head" style="margin-top:16px">
+            <span class="pg-card-title">UC</span>
+            <button class="btn" id="pgCopyUC">Copy</button>
+          </div>
+          <textarea class="pg-input mono" id="pgUC" rows="3" spellcheck="false"></textarea>
+          <div class="pg-send">
+            <button class="btn primary" id="pgSend">Send to NovelAI</button>
+            <span class="pg-sendnote" id="pgSendNote"></span>
+          </div>
+        </div>
+
+        <div class="pg-card">
+          <div class="pg-card-head"><span class="pg-card-title">Presets</span></div>
+          <div class="pg-presets" id="pgPresets"></div>
+        </div>
+      </aside>
     </div>
   </section>
+
+  <!-- Generate, through NovelAI's own API.
+       Laid out the way NovelAI's own page is - settings down the left, the
+       picture in the middle, history down the right - because that is the
+       shape the work actually has. The styling is this app's. -->
+  <section id="toolGenerate" class="tool-pane gen" hidden>
+    <div class="gen-dropveil" id="genDropVeil" hidden>
+      <div class="gen-dropveil-inner">Drop to read this image’s prompt</div>
+    </div>
+    <!-- Left: everything you set -->
+    <div class="gen-side">
+      <div class="gen-scroll">
+      <div class="wip-banner compact">
+        <span class="wip-tag">WIP</span>
+        <span>Generating spends Anlas and talks to NovelAI directly.</span>
+      </div>
+
+      <div class="gen-block" id="genTokenCard">
+        <div class="gen-block-head">
+          <span class="gen-block-title">API token</span>
+          <span class="gen-anlas" id="genAnlas" hidden></span>
+          <span class="gen-token-state" id="genTokenState"></span>
+          <button class="btn" id="genTokenSettings">Settings</button>
+        </div>
+        <div class="gen-note" id="genTokenNote"></div>
+      </div>
+
+      <div class="gen-block">
+        <div class="gen-modelrow">
+          <span class="gen-block-title">Model</span>
+          <select class="pg-select" id="genModel"></select>
+        </div>
+        <input class="pg-input mono" id="genModelCustom" spellcheck="false" hidden
+          placeholder="model identifier, e.g. nai-diffusion-5-full" />
+      </div>
+
+      <div class="gen-block grow">
+        <div class="gen-tabs" role="tablist">
+          <button class="gen-tab active" data-box="prompt" role="tab">Prompt</button>
+          <button class="gen-tab" data-box="negative" role="tab">UC</button>
+          <div class="topbar-spacer"></div>
+          <button class="btn" id="genFromPrompt" title="Take the prompt from the Prompt Generator tab">From generator</button>
+        </div>
+        <textarea class="pg-input mono gen-prompt" id="genPrompt" spellcheck="false"
+          placeholder="1girl, city street, night, neon lights…"></textarea>
+        <textarea class="pg-input mono gen-prompt" id="genNegative" spellcheck="false" hidden></textarea>
+      </div>
+
+      <div class="gen-block">
+        <div class="gen-block-head foldable" data-fold="chars">
+          <span class="gen-caret">▾</span>
+          <span class="gen-block-title">Character prompts</span>
+          <span class="gen-count" id="genCharCount">0</span>
+          <div class="topbar-spacer"></div>
+          <button class="btn" id="genAddChar">Add</button>
+        </div>
+        <div class="gen-foldbody" data-body="chars">
+          <div class="gen-posrow" id="genPosRow" hidden>
+            <span class="gen-poslabel">Position</span>
+            <div class="gen-seg" role="group" aria-label="Character position">
+              <button class="gen-segbtn active" data-pos="auto">AI's Choice</button>
+              <button class="gen-segbtn" data-pos="custom">Custom</button>
+            </div>
+            <button class="pg-icon" id="genOpenCanvas" title="Place characters on the canvas"
+              aria-label="Place characters" disabled>▦</button>
+          </div>
+          <div id="genChars"></div>
+        </div>
+      </div>
+
+      <!-- Working from an existing picture. Hidden until there is one. -->
+      <div class="gen-block" id="genRefBlock">
+        <div class="gen-block-head"><span class="gen-block-title">Reference images</span></div>
+
+        <!-- Nothing loaded yet. Two of these are NovelAI features this app
+             does not carry yet; they are shown greyed rather than hidden so
+             it is clear what exists and what is missing. -->
+        <div id="genRefEmpty">
+          <div class="gen-refopt">
+            <span class="gen-refopt-icon">⧉</span>
+            <span class="gen-refopt-text">
+              <span class="gen-refopt-name">Image2Image</span>
+              <span class="gen-refopt-sub">Transform your image.</span>
+            </span>
+            <button class="btn icon-only" id="genRefUpload" title="Choose an image" aria-label="Choose an image">⤒</button>
+            <button class="btn icon-only" id="genRefPaint" title="Choose an image and paint a mask" aria-label="Paint a mask">✎</button>
+          </div>
+          <div class="gen-refopt disabled" aria-disabled="true">
+            <span class="gen-refopt-icon">◈</span>
+            <span class="gen-refopt-text">
+              <span class="gen-refopt-name">Vibe Transfer</span>
+              <span class="gen-refopt-sub">Change the image, keep the vision.</span>
+            </span>
+            <span class="gen-refopt-soon">Not yet</span>
+          </div>
+          <div class="gen-refopt disabled" aria-disabled="true">
+            <span class="gen-refopt-icon">▤</span>
+            <span class="gen-refopt-text">
+              <span class="gen-refopt-name">Precise Reference</span>
+              <span class="gen-refopt-sub">Add a reference image for a character or style.</span>
+            </span>
+            <span class="gen-refopt-soon">Not yet</span>
+          </div>
+        </div>
+        <input type="file" id="genRefInput" accept="image/png,image/jpeg" hidden />
+
+        <div class="gen-ref" id="genRefActive" hidden>
+          <img class="gen-ref-thumb" id="genRefThumb" alt="" />
+          <div class="gen-ref-body">
+            <div class="gen-ref-name" id="genRefName">Image2Image</div>
+            <div class="gen-ref-size" id="genRefSize"></div>
+            <div class="gen-ref-btns">
+              <button class="btn" id="genInpaintBtn" title="Paint over the part to replace">Inpaint</button>
+              <button class="btn icon-only" id="genRefClear" title="Remove this reference image" aria-label="Remove">×</button>
+            </div>
+          </div>
+        </div>
+        <!-- Only meaningful once there is something to control, so it stays
+             out of the way until a mask has been painted and saved. -->
+        <div id="genRefSliders" hidden>
+          <label class="pg-field gen-slider">
+            <span class="pg-label">Strength <span class="gen-slider-val" id="genStrengthVal">0.7</span></span>
+            <input type="range" id="genStrength" min="0.01" max="0.99" step="0.01" value="0.7" />
+          </label>
+          <label class="pg-field gen-slider">
+            <span class="pg-label">Noise <span class="gen-slider-val" id="genNoiseVal">0</span></span>
+            <input type="range" id="genNoise" min="0" max="1" step="0.01" value="0" />
+          </label>
+        </div>
+      </div>
+
+      <div class="gen-block">
+        <div class="gen-block-head foldable" data-fold="settings">
+          <span class="gen-caret">▾</span>
+          <span class="gen-block-title">Settings</span>
+        </div>
+        <div class="gen-foldbody" data-body="settings">
+        <div class="gen-grid">
+          <label class="pg-field"><span class="pg-label">Size</span>
+            <select class="pg-select" id="genSize"></select>
+          </label>
+          <label class="pg-field"><span class="pg-label">Sampler</span>
+            <select class="pg-select" id="genSampler"></select>
+          </label>
+          <label class="pg-field"><span class="pg-label">Steps</span>
+            <input class="pg-input" id="genSteps" type="number" min="1" max="50" value="23" />
+          </label>
+          <label class="pg-field"><span class="pg-label">Guidance</span>
+            <input class="pg-input" id="genScale" type="number" min="0" max="10" step="0.1" value="6" />
+          </label>
+          <label class="pg-field"><span class="pg-label">CFG rescale</span>
+            <input class="pg-input" id="genRescale" type="number" min="0" max="1" step="0.01" value="0" />
+          </label>
+          <label class="pg-field"><span class="pg-label">Seed <span class="pg-label-dim">(blank = random)</span></span>
+            <input class="pg-input" id="genSeed" type="number" min="0" placeholder="random" />
+          </label>
+          <label class="pg-field"><span class="pg-label">How many</span>
+            <select class="pg-select" id="genCount">
+              <option>1</option><option>2</option><option>3</option><option>4</option>
+            </select>
+          </label>
+        </div>
+        </div>
+      </div>
+
+      </div>
+
+      <!-- Outside the scrolling area on purpose: whatever you have folded
+           or scrolled past, the thing you came here to do stays put. -->
+      <div class="gen-foot">
+        <button class="btn primary gen-go" id="genGo">Generate</button>
+        <div class="gen-progress" id="genProgress" hidden>
+          <div class="gen-progress-fill" id="genProgressFill"></div>
+        </div>
+        <div class="gen-status" id="genStatus"></div>
+      </div>
+    </div>
+
+    <!-- Middle: the picture -->
+    <div class="gen-stage">
+      <div class="gen-canvas" id="genCanvas">
+        <div class="gen-placeholder" id="genPlaceholder">
+          Nothing generated yet. What you make appears here first — it only
+          joins your gallery when you keep it.
+          <div class="gen-placeholder-drop">
+            Drop a NovelAI PNG anywhere here to read its prompt and settings
+            back out of it.
+          </div>
+        </div>
+        <img id="genPreview" alt="" hidden />
+      </div>
+      <div class="gen-actions" id="genActions" hidden>
+        <button class="btn primary" id="genKeep">Save to gallery</button>
+        <button class="btn" id="genInpaintCurrent"
+          title="Repaint part of this image — it becomes the reference and the mask painter opens">Inpaint</button>
+        <button class="btn" id="genReuseSeed" title="Put this image's seed into the form">Use seed</button>
+        <button class="btn" id="genDiscard">Discard</button>
+        <div class="topbar-spacer"></div>
+        <span class="gen-meta" id="genMeta"></span>
+      </div>
+    </div>
+
+    <!-- Right: this session's history -->
+    <aside class="gen-history">
+      <div class="gen-history-head">
+        <button class="pg-icon" id="genHistoryFold" title="Hide the history" aria-label="Hide history">›</button>
+        <span class="gen-block-title">History</span>
+        <button class="pg-icon" id="genClearHistory" title="Clear unsaved generations" aria-label="Clear history">×</button>
+      </div>
+      <div class="gen-strip" id="genStrip"></div>
+      <div class="gen-note" id="genHistoryNote">
+        Held for this session only. Anything you haven't saved is cleared
+        when the app closes.
+      </div>
+    </aside>
+  </section>
+
+  <!-- Placing characters. A separate surface because dragging a marker
+       needs room, and the sidebar has none. -->
+  <div id="genCanvasModal" class="modal" hidden>
+    <div class="genpos">
+      <div class="genpos-head">
+        <span class="genpos-title">Character positions</span>
+        <span class="genpos-size" id="genPosSize"></span>
+        <span class="genpos-hint">Drag each marker where you want that character. This is a nudge to the model, not a guarantee.</span>
+        <div class="topbar-spacer"></div>
+        <button class="btn" id="genPosReset">Reset to centre</button>
+        <button class="btn primary" id="genPosDone">Finish</button>
+      </div>
+      <div class="genpos-stage">
+        <div class="genpos-frame" id="genPosFrame">
+          <div class="genpos-grid" aria-hidden="true"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- What to do with an image that was dropped in or sent over from the
+       gallery. Two different things can be wanted from the same picture -
+       work from it, or take its recipe - and guessing wrong silently turns
+       a plain generation into img2img. -->
+  <div id="genImportModal" class="modal" hidden>
+    <div class="modal-panel import">
+      <div class="modal-head">
+        <div class="modal-title">What do you want to do with this image?</div>
+        <button class="btn icon-only" id="genImportClose" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="import-preview"><img id="genImportThumb" alt="" /></div>
+
+        <div class="import-actions">
+          <button class="btn primary" id="genImportI2I">Image2Image</button>
+          <button class="btn" disabled title="Not available in this app yet">Vibe Transfer</button>
+          <button class="btn" disabled title="Not available in this app yet">Precise Reference</button>
+        </div>
+
+        <div id="genImportMeta">
+          <div class="import-heading">
+            This image has metadata.
+            <span class="import-sub">Import that instead?</span>
+          </div>
+
+          <div class="import-fields">
+            <label class="import-check"><input type="checkbox" id="impPrompt" checked /> <span>Prompt</span></label>
+            <label class="import-check"><input type="checkbox" id="impUC" checked /> <span>Undesired content</span></label>
+            <label class="import-check"><input type="checkbox" id="impChars" checked /> <span>Characters</span></label>
+            <label class="import-check sub"><input type="checkbox" id="impAppend" /> <span>Append to the characters already here</span></label>
+            <label class="import-check"><input type="checkbox" id="impSettings" checked /> <span>Settings</span></label>
+            <label class="import-check"><input type="checkbox" id="impSeed" /> <span>Seed</span></label>
+          </div>
+
+          <div class="import-foot">
+            <label class="import-check"><input type="checkbox" id="impClean" checked />
+              <span>Clean imports</span></label>
+            <span class="import-hint">Leaves out the quality tags NovelAI adds of its own accord.</span>
+            <div class="topbar-spacer"></div>
+            <button class="btn primary" id="genImportGo">Import metadata</button>
+          </div>
+        </div>
+
+        <div id="genImportNoMeta" class="import-heading" hidden>
+          No NovelAI metadata in this one — it can still be worked from.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Painting a mask. Full-window, because the part you want to replace is
+       often small and needs the room. -->
+  <div id="genMaskModal" class="modal mask" hidden>
+    <div class="mask-tools">
+      <div class="mask-tool-group">
+        <span class="mask-tool-label">Brush</span>
+        <span class="mask-pen-val" id="maskPenVal">64 px</span>
+        <!-- 8px is NovelAI's mask granularity: it works the mask in 8x8
+             blocks, so a smaller brush would paint nothing that survives. -->
+        <input type="range" id="maskPen" min="8" max="512" step="8" value="64"
+          aria-label="Brush size in pixels" />
+        <label class="pg-inline">
+          <input type="checkbox" id="maskSquare" />
+          <span>Square brush</span>
+        </label>
+      </div>
+      <div class="mask-tool-group mask-zoom-group">
+        <span class="mask-tool-label">Zoom</span>
+        <button class="btn icon-only" id="maskZoomOut" title="Zoom out (−)" aria-label="Zoom out">−</button>
+        <span class="mask-pen-val" id="maskZoomVal">100%</span>
+        <button class="btn icon-only" id="maskZoomIn" title="Zoom in (+)" aria-label="Zoom in">+</button>
+        <button class="btn" id="maskZoomReset" title="Back to the whole picture (0, or double-click)">Fit</button>
+      </div>
+      <div class="topbar-spacer"></div>
+      <button class="btn" id="maskCancel">Cancel</button>
+      <button class="btn primary" id="maskSave">Save &amp; close</button>
+    </div>
+
+    <div class="mask-stage" id="maskStage">
+      <div class="mask-frame" id="maskFrame">
+        <img id="maskImg" alt="" />
+        <canvas id="maskCanvas"></canvas>
+        <div class="mask-cursor" id="maskCursor" hidden></div>
+      </div>
+    </div>
+
+    <div class="mask-bar">
+      <button class="btn mask-mode active" id="maskBrush" title="Paint the area to replace (B)">Brush</button>
+      <button class="btn mask-mode" id="maskErase" title="Rub the mask out (E)">Erase</button>
+      <span class="mask-keys" title="Scroll to zoom · Ctrl+scroll or [ ] to resize the brush · space or middle-drag to pan · 0 to fit">scroll zoom · space drag · [ ] size · B/E</span>
+      <div class="topbar-spacer"></div>
+      <span class="mask-hint" id="maskHint">Paint over what you want replaced.</span>
+      <div class="topbar-spacer"></div>
+      <button class="btn" id="maskUndo" title="Undo the last stroke (Ctrl+Z)">Undo</button>
+      <button class="btn" id="maskClear" title="Clear the whole mask">Clear</button>
+    </div>
+  </div>
 
   <!-- Naming things: new folders, renames, folder tags. Deliberately not
        window.prompt, which draws an operating-system box that ignores the
@@ -507,5 +958,8 @@
   <div class="toast" id="toast"></div>
   <script src="prompt.js"></script>
   <script src="app.js"></script>
+  <script src="promptgen.js"></script>
+  <script src="mask.js"></script>
+  <script src="generate.js"></script>
 </body>
 </html>

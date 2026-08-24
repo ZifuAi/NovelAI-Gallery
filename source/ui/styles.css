@@ -35,6 +35,9 @@
   --r-md: 12px;
   --r-lg: 18px;
   --sidebar-w: 232px;
+  /* The metadata column in the large view. 384 was tight enough that tag
+     chips wrapped mid-word and the colour row ran out of room. */
+  --details-w: 460px;
   --topbar-h: 62px;
   --tools-h: 40px;
 
@@ -121,12 +124,23 @@ button, input { font: inherit; color: inherit; }
 .tool-empty-title { font-size: 18px; font-weight: 650; margin-bottom: 10px; }
 .tool-empty-body { font-size: 13.5px; line-height: 1.7; color: var(--text-dim); }
 
+/* `hidden` is only a user-agent style of display:none, so any rule of ours
+   that sets display beats it. That has now bitten twice - the tool tabs did
+   nothing because `#app { display: grid }` won, and a hidden input showed
+   anyway because `.pg-input { display: block }` won. Stating it once, with
+   the weight to hold, ends the whole class of bug: if an element carries
+   `hidden`, it is not displayed. */
+[hidden] { display: none !important; }
+
 #app {
   display: grid;
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--inspector-w, 0px);
   grid-template-rows: var(--topbar-h) 1fr;
+  /* The toolbar spans the full width now that the brand corner is gone:
+     the app name and the tabs live in the strip above, and having them
+     again here meant "Gallery" appeared twice in the same corner. */
   grid-template-areas:
-    "brand topbar topbar"
+    "topbar topbar topbar"
     "sidebar content inspector";
   height: calc(100vh - var(--tools-h));
   transition: grid-template-columns 0.22s var(--ease);
@@ -574,14 +588,14 @@ button, input { font: inherit; color: inherit; }
 .lightbox-panel {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 384px;
+  grid-template-columns: minmax(0, 1fr) var(--details-w);
   /* An implicit auto row grows to the image's natural height, which the
      panel then clips - that was the large view "cropping" pictures. A
      minmax(0, 1fr) row is bounded by the panel instead, so the image's
      max-height has something real to resolve against. */
   grid-template-rows: minmax(0, 1fr);
   width: 100%;
-  max-width: 1240px;
+  max-width: 1420px;
   height: 100%;
   max-height: 840px;
   background: var(--surface-1);
@@ -709,8 +723,30 @@ button, input { font: inherit; color: inherit; }
   word-break: break-word;
 }
 
-.reuse-row { display: flex; gap: 8px; margin-bottom: 18px; }
-.reuse-row .btn { flex: 1; }
+/* Three buttons in a narrow column. `flex: 1` alone refuses to shrink a
+   button below its label, so the row overflowed the details panel and slid
+   underneath the image beside it - where it looked present but could not be
+   clicked. Wrapping, and allowing them to shrink, keeps every button inside
+   the column at any panel width. */
+/* The long label gets the full width to itself on the first line, and the
+   two short ones share the second. Three across meant every label was
+   squeezed, and the longest one wrapped mid-phrase. */
+.reuse-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.reuse-main { grid-column: 1 / -1; justify-content: center; }
+.reuse-side {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+}
+.reuse-side svg { flex: 0 0 auto; }
+.reuse-side span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .hint {
   font-size: 11.5px;
@@ -1350,6 +1386,20 @@ button, input { font: inherit; color: inherit; }
   padding: 12px 14px;
   margin-top: 18px;
 }
+
+/* A warning that has to be read rather than skimmed past: the API token is
+   the one thing here that can cost someone money if they hand it over. */
+.callout.warn {
+  border-color: color-mix(in srgb, var(--danger, #e5484d) 55%, var(--border));
+  background: color-mix(in srgb, var(--danger, #e5484d) 10%, var(--surface-2));
+  color: var(--text);
+}
+.callout.warn .sub { margin-top: 8px; color: var(--text-dim); }
+
+/* The token field on the first-run guide. */
+.token-row { display: flex; gap: 8px; margin: 10px 0 6px; }
+.token-row .pg-input { flex: 1; min-width: 0; }
+#obTokenState[data-ok="yes"] { color: var(--accent); }
 
 .hint-inline {
   font-size: 12px;
@@ -2243,7 +2293,10 @@ button, input { font: inherit; color: inherit; }
 /* The toggle in the details panel */
 .nsfw-row {
   display: flex;
-  align-items: flex-start;
+  /* The track is one line tall and the label is two, so aligning to the
+     top of the block left the switch sitting above the words it belongs
+     to. Centring on the first line puts them level. */
+  align-items: center;
   gap: 11px;
   margin: 0 0 20px;
   padding: 11px 12px;
@@ -2526,13 +2579,15 @@ button, input { font: inherit; color: inherit; }
 .color-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 5px;
   margin-bottom: 14px;
 }
 .color-row-label {
   font-size: 11px;
   color: var(--text-faint);
-  margin-right: 4px;
+  margin-right: 6px;
+  white-space: nowrap;
 }
 .color-pick {
   width: 18px;
@@ -2886,3 +2941,1021 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .card:hover .nsfw-hide,
 .nsfw-hide:focus-visible { opacity: 1; }
 .nsfw-hide:hover { background: rgba(12, 14, 20, 0.9); border-color: #fff; }
+
+/* ============================================================
+   Prompt Generator
+   ============================================================ */
+
+/* Three columns across the whole window: what steers the roll on the left,
+   the pools in the middle, the finished prompt on the right. It used to be
+   one narrow column down the centre with the width wasted either side,
+   which made a long list of pools feel much longer than it is. */
+.pg {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 380px;
+  gap: 0;
+  height: calc(100vh - var(--tools-h) - var(--wip-h, 0px));
+  min-height: 0;
+  align-items: stretch;
+}
+@media (max-width: 1240px) {
+  .pg { grid-template-columns: 260px minmax(0, 1fr) 320px; }
+}
+@media (max-width: 980px) {
+  /* Below this the three columns stop being columns and start being
+     slivers, so it goes back to one scrolling page. */
+  .pg { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .pg-steerpane, .pg-side { border: none; }
+}
+
+.pg-steerpane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  background: var(--surface-1);
+  border-right: 1px solid var(--border);
+}
+
+.pg-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.pg-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  background: var(--surface-1);
+  border-left: 1px solid var(--border);
+}
+.pg-side .sticky { position: static; }
+
+/* The pools sit two abreast when there is room, which is the whole point of
+   using the width. */
+.pg-buckets { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; align-content: start; }
+.pg-group + .pg-group { margin-top: 0; }
+
+.pg-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.pg-select {
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.pg-card {
+  padding: 14px 16px 16px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.pg-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.pg-card-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.pg-steer { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 720px) { .pg-steer { grid-template-columns: 1fr; } }
+
+.pg-field { display: block; }
+.pg-label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 5px; }
+
+.pg-input {
+  display: block;
+  width: 100%;
+  padding: 8px 11px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  outline: none;
+  resize: vertical;
+}
+.pg-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.pg-input::placeholder { color: var(--text-faint); }
+.pg-input.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.pg-range { width: 100%; margin: 2px 0 8px; accent-color: var(--accent); }
+.pg-mixread { font-size: 12px; color: var(--accent); margin-left: auto; }
+.pg-mixhint { font-size: 11.5px; line-height: 1.6; color: var(--text-faint); }
+
+.pg-inline {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.pg-inline input { accent-color: var(--accent); }
+
+/* --- buckets --- */
+
+.pg-buckets { display: flex; flex-direction: column; gap: 10px; }
+
+.pg-bucket {
+  padding: 10px 12px 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  transition: opacity 0.14s var(--ease);
+}
+/* A bucket left out of the prompt is dimmed rather than hidden, so you can
+   still see and edit what it holds. */
+.pg-bucket.off { opacity: 0.45; }
+
+.pg-bucket-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.pg-bucket-name { font-size: 12.5px; font-weight: 600; }
+.pg-badge {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.pg-icon {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.pg-icon:hover { background: var(--surface-3); color: var(--text); }
+.pg-icon.on { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
+
+.pg-bucket-text { min-height: 46px; }
+
+/* --- the result --- */
+
+.pg-out {
+  margin: 0;
+  padding: 12px 13px;
+  min-height: 150px;
+  max-height: 42vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.pg-card-head .btn { margin-left: auto; }
+
+.pg-send { margin-top: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pg-sendnote { font-size: 11.5px; color: var(--accent); }
+
+.pg-presets { display: flex; flex-direction: column; gap: 4px; }
+.pg-preset {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 5px 10px;
+  border-radius: var(--r-sm);
+}
+.pg-preset:hover { background: var(--surface-2); }
+.pg-preset-name { flex: 1; font-size: 12.5px; }
+.pg-hint { font-size: 12px; line-height: 1.6; color: var(--text-faint); }
+
+/* Collapsible groups, so a dozen buckets read as six sections rather than
+   one long scroll. */
+.pg-group {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.pg-group + .pg-group { margin-top: 10px; }
+
+.pg-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.pg-group-head:hover { background: var(--surface-2); }
+.pg-caret { width: 12px; font-size: 10px; color: var(--text-faint); }
+.pg-group-name { font-size: 12.5px; font-weight: 600; }
+.pg-group-count {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+.pg-group-body { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+.pg-group.folded .pg-group-body { display: none; }
+
+/* Inside a group the bucket loses its own frame - the group is the frame. */
+.pg-group .pg-bucket { border: none; background: none; padding: 0; }
+.pg-group .pg-bucket + .pg-bucket { border-top: 1px solid var(--border); padding-top: 8px; }
+
+.pg-charrow { display: flex; gap: 8px; align-items: center; margin-bottom: 9px; flex-wrap: wrap; }
+.pg-charrow .pg-select { flex: 1; min-width: 130px; }
+
+/* Says plainly that a tool is newer and less tested than the rest of the
+   app, rather than letting someone find that out by being surprised. */
+.wip-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 24px 0;
+  padding: 9px 13px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--star);
+  border-radius: var(--r-sm);
+}
+.wip-tag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--star);
+}
+
+/* --- Generate ---------------------------------------------------------
+
+   Three columns, the shape the work has: what you set on the left, the
+   picture in the middle, what you have already made on the right. Same
+   arrangement as NovelAI's own page, built out of this app's own parts. */
+
+.tool-pane.gen {
+  display: grid;
+  grid-template-columns: 380px minmax(0, 1fr) 168px;
+  gap: 0;
+  height: calc(100vh - var(--tools-h));
+  overflow: hidden;
+}
+@media (max-width: 1180px) {
+  .tool-pane.gen { grid-template-columns: 330px minmax(0, 1fr) 132px; }
+}
+
+.gen-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface-1);
+  border-right: 1px solid var(--border);
+}
+.gen-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+/* The button never scrolls away. */
+.gen-foot {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+.gen-block {
+  padding: 11px 12px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+/* The prompt box takes whatever height is going: it is the field you
+   actually spend time in. */
+.gen-block.grow { flex: 0 0 auto; display: flex; flex-direction: column; }
+
+.gen-block-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.gen-block-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.gen-modelrow { display: flex; align-items: center; gap: 8px; }
+.gen-modelrow .pg-select { flex: 1; min-width: 0; padding: 5px 8px; font-size: 12px; }
+
+/* The token block is status and a way to Settings, so it earns one line
+   rather than a card. */
+#genTokenCard { padding: 8px 10px; }
+#genTokenCard .gen-block-head { margin-bottom: 0; }
+#genTokenCard .btn { padding: 4px 9px; font-size: 11.5px; }
+#genTokenCard .gen-note { margin-top: 6px; }
+#genTokenCard.compact .gen-note { display: none; }
+
+.gen-block:has(> .gen-modelrow) { padding: 8px 10px; }
+
+.gen-tokenrow { display: flex; gap: 6px; }
+.gen-tokenrow .pg-input { flex: 1; min-width: 0; }
+
+.gen-note { margin-top: 8px; font-size: 11px; line-height: 1.55; color: var(--text-faint); }
+
+.gen-tabs { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+.gen-tab {
+  padding: 4px 10px;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 11.5px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.gen-tab:hover { color: var(--text); background: var(--surface-3); }
+.gen-tab.active { color: var(--accent); background: var(--accent-soft); }
+
+/* One rule for every prompt box, so the scene's and a character's are the
+   same field in two places rather than two fields that happen to look
+   similar. `flex: 1` was the reason the main one would not resize: a flex
+   item's height is recomputed from the container, so whatever height you
+   dragged it to was thrown away on the next layout. */
+.gen-prompt,
+.gen-char-box {
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 116px;
+  height: 116px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.gen-prompt { min-height: 130px; height: 150px; }
+
+.gen-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.pg-label-dim { color: var(--text-faint); font-weight: 400; }
+
+.gen-token-state {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.gen-token-state[data-on="yes"] { color: #4ade80; }
+.gen-token-state[data-on="no"] { color: var(--text-faint); }
+
+.gen-go { justify-content: center; padding: 11px; font-size: 13.5px; }
+.gen-status { font-size: 11.5px; line-height: 1.5; min-height: 16px; text-align: center; }
+.gen-status[data-state="working"] { color: var(--accent); }
+.gen-status[data-state="done"] { color: #4ade80; }
+.gen-status[data-state="error"] { color: var(--danger); }
+
+.wip-banner.compact { margin: 0 0 2px; padding: 7px 10px; font-size: 11px; }
+
+/* --- the stage --- */
+
+.gen-stage {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 14px;
+  gap: 12px;
+}
+.gen-canvas {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  /* Both tracks bounded, not auto. An implicit auto track grows to the
+     image's natural size and the panel then clips it - the same thing that
+     made the large view appear to crop pictures. Bounding them gives the
+     image's max-height something real to resolve against. */
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+/* Whole, never cropped - the same promise the gallery makes. Held a little
+   short of the edges so a tall picture doesn't touch the frame. */
+.gen-canvas img {
+  max-width: 96%;
+  max-height: 96%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: var(--r-sm);
+}
+.gen-placeholder {
+  max-width: 380px;
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-faint);
+}
+
+.gen-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gen-meta {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* --- history --- */
+
+.gen-history {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 10px;
+  background: var(--surface-1);
+  border-left: 1px solid var(--border);
+}
+.gen-history-head { display: flex; align-items: center; gap: 6px; margin-bottom: 9px; }
+.gen-history-head .pg-icon { margin-left: auto; }
+
+.gen-strip {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.gen-thumb {
+  position: relative;
+  padding: 0;
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--bg);
+  overflow: hidden;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.gen-thumb:hover { border-color: var(--border-strong); }
+.gen-thumb.current { border-color: var(--accent); }
+.gen-thumb img { width: 100%; display: block; }
+
+/* A tick means it is in the library; without it, it is still only here. */
+.gen-kept {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  color: #0b0e1a;
+  background: #4ade80;
+  border-radius: 999px;
+}
+
+/* The price sits on the button, the way NovelAI's does, so the cost is in
+   front of you at the moment you decide rather than afterwards. */
+.gen-go { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.gen-cost {
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.settings-note {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+.settings-note strong { color: var(--text); }
+
+/* Grid children default to min-width:auto, so a number input's intrinsic
+   width pushed the second column past the edge of the sidebar. */
+.gen-grid > .pg-field { min-width: 0; }
+.gen-grid .pg-input,
+.gen-grid .pg-select { width: 100%; min-width: 0; }
+
+/* --- character prompts, folding, history --- */
+
+.gen-block-head.foldable { cursor: pointer; -webkit-user-select: none; user-select: none; }
+.gen-block-head.foldable:hover .gen-block-title { color: var(--text); }
+.gen-caret { font-size: 9px; color: var(--text-faint); width: 10px; }
+.gen-count {
+  font-size: 10px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+/* A character is written exactly the way the scene is: a header row and a
+   box under it, sitting directly in the section. It used to be a bordered
+   card inside the section, which put the field three boxes deep while the
+   main prompt was only two. */
+.gen-char { padding: 0; margin-bottom: 14px; background: none; border: none; }
+.gen-char + .gen-char { padding-top: 14px; border-top: 1px solid var(--border); }
+.gen-char-head { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; }
+.gen-char-tabs { margin: 0; }
+.gen-char-tabs .gen-tab { padding: 3px 8px; font-size: 10.5px; }
+
+.gen-char-n {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+}
+
+
+/* Folded, the history keeps only its handle, so the picture gets the room. */
+.gen-history.folded { padding: 12px 6px; }
+.gen-history.folded .gen-strip,
+.gen-history.folded .gen-note,
+.gen-history.folded .gen-block-title,
+.gen-history.folded #genClearHistory { display: none; }
+.tool-pane.gen:has(.gen-history.folded) { grid-template-columns: 380px minmax(0, 1fr) 40px; }
+
+/* Grid items default to min-width:auto, and a textarea's intrinsic width is
+   wide - so the pools stacked in one column even where two fitted. */
+.pg-buckets > .pg-group { min-width: 0; }
+.pg-group .pg-bucket-text { width: 100%; min-width: 0; box-sizing: border-box; }
+
+/* --- character positions --- */
+
+.gen-posrow { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.gen-poslabel { font-size: 11.5px; color: var(--text-dim); }
+
+.gen-seg {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.gen-segbtn {
+  padding: 5px 11px;
+  border: none;
+  background: var(--surface-1);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.gen-segbtn:hover { color: var(--text); background: var(--surface-3); }
+.gen-segbtn.active { color: var(--accent-contrast); background: var(--accent); }
+
+.gen-char-at {
+  margin-top: 5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+/* The placement surface. */
+.genpos {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  max-width: 1100px;
+  max-height: 92vh;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.genpos-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.genpos-title { font-size: 14px; font-weight: 600; }
+.genpos-hint { font-size: 11.5px; color: var(--text-faint); }
+
+.genpos-stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: var(--bg);
+}
+.genpos-frame {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  height: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+/* Gridlines to judge placement against, the way a rule of thirds overlay
+   works - they are guides, not cells to snap to: placement is free. */
+.genpos-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, var(--border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+  background-size: 12.5% 12.5%;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.genpos-mark {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  border: 2px solid var(--surface-1);
+  border-radius: 999px;
+  cursor: grab;
+  touch-action: none;
+  box-shadow: var(--shadow-sm);
+}
+.genpos-mark:hover { transform: scale(1.08); }
+.genpos-mark.dragging { cursor: grabbing; transform: scale(1.15); }
+
+.genpos-size {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--accent);
+  padding: 2px 8px;
+  background: var(--accent-soft);
+  border-radius: 999px;
+}
+
+/* --- progress, balance, dropping a PNG in --- */
+
+.gen-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.gen-progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.15s linear;
+}
+
+.gen-anlas {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 1px 7px;
+  background: var(--accent-soft);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+/* Both sit on the right; the balance goes first and the state after it. */
+.gen-anlas + .gen-token-state { margin-left: 6px; }
+
+.gen-placeholder-drop {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+  font-size: 11.5px;
+}
+
+.gen-dropveil {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 12, 18, 0.82);
+  pointer-events: none;
+}
+.gen-dropveil-inner {
+  padding: 18px 26px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  border: 2px dashed var(--accent);
+  border-radius: var(--r-md);
+}
+.tool-pane.gen { position: relative; }
+
+/* --- reference images --- */
+
+.gen-refopt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.gen-refopt + .gen-refopt { margin-top: 6px; }
+/* Greyed rather than hidden: it should be clear what NovelAI offers and
+   what this app has not built yet. */
+.gen-refopt.disabled { opacity: 0.45; }
+.gen-refopt-icon { font-size: 15px; color: var(--text-dim); width: 20px; text-align: center; }
+.gen-refopt-text { flex: 1; min-width: 0; }
+.gen-refopt-name { display: block; font-size: 12.5px; font-weight: 600; }
+.gen-refopt-sub { display: block; font-size: 11px; color: var(--text-faint); margin-top: 1px; }
+.gen-refopt-soon {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.gen-refopt .btn.icon-only { width: 28px; height: 28px; }
+
+.gen-ref { display: flex; gap: 10px; align-items: flex-start; }
+.gen-ref-thumb {
+  width: 62px;
+  height: 62px;
+  object-fit: cover;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.gen-ref-body { flex: 1; min-width: 0; }
+.gen-ref-name { font-size: 12.5px; font-weight: 600; margin-bottom: 7px; }
+.gen-ref-btns { display: flex; gap: 6px; }
+
+.gen-slider { margin-top: 10px; }
+.gen-slider input[type="range"] { width: 100%; accent-color: var(--accent); }
+.gen-slider-val {
+  float: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--accent);
+}
+
+/* --- the mask painter --- */
+
+.modal.mask { padding: 0; flex-direction: column; background: rgba(8, 9, 12, 0.97); }
+.mask-tools, .mask-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  width: 100%;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+}
+.mask-bar { border-bottom: none; border-top: 1px solid var(--border); }
+.mask-tool-group { display: flex; align-items: center; gap: 10px; }
+.mask-tool-label { font-size: 11.5px; color: var(--text-dim); }
+.mask-pen-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--accent);
+  min-width: 22px;
+}
+.mask-tools input[type="range"] { width: 150px; accent-color: var(--accent); }
+.mask-hint { font-size: 11.5px; color: var(--text-faint); }
+.mask-keys {
+  font-size: 11px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+.mask-mode.active { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+
+/* Zoomed-in painting has to stay inside the window rather than pushing the
+   toolbars off the screen. */
+.mask-stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  width: 100%;
+  overflow: hidden;
+}
+.mask-zoom-group { border-left: 1px solid var(--border); padding-left: 12px; }
+.mask-zoom-group .btn.icon-only { min-width: 26px; padding: 2px 6px; }
+#maskZoomVal { min-width: 42px; text-align: center; }
+/* The image and the mask are stacked on the same box, so the box has to be
+   the picture's shape: the aspect ratio is set on it when the painter
+   opens. The suite checks the two line up at a window too narrow for a
+   wide picture, which is the shape that would show a mismatch. */
+.mask-frame {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  height: 100%;
+  line-height: 0;
+}
+.mask-frame img,
+.mask-frame canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--r-sm);
+}
+.mask-frame img { object-fit: contain; }
+/* The mask sits over the picture at reduced opacity so you can see what is
+   underneath the part you are about to replace. */
+.mask-frame canvas { opacity: 0.6; cursor: crosshair; touch-action: none; }
+/* Holding space says "drag me" rather than "paint on me". */
+.mask-frame.panning canvas { cursor: grab; }
+/* Sharp at any zoom: the mask is 8px blocks and the picture is being looked
+   at closely, so smoothing both would be smoothing away the thing being
+   inspected. */
+.mask-frame canvas { image-rendering: pixelated; }
+
+/* The brush's actual footprint. The picture is nearly always shown smaller
+   than it is, so a number on a slider says nothing about how much of the
+   image the brush covers; this does. */
+.mask-cursor {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border: 1.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.55);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 2;
+}
+.mask-cursor.square { border-radius: 2px; }
+.mask-cursor.erase { border-style: dashed; }
+
+/* A balance that could not be read is stated as unknown rather than hidden:
+   a figure that disappears looks the same as one that is broken. */
+.gen-anlas[data-known="no"] {
+  color: var(--text-faint);
+  background: var(--surface-3);
+}
+
+/* --- dropdowns ---
+   The browser's default select is a grey box with a system arrow that
+   ignores the theme entirely. This keeps the native menu - which behaves
+   correctly and is accessible - and restyles only the closed control. */
+.pg-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 7px 30px 7px 11px;
+  background-color: var(--surface-2);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-dim) 50%),
+    linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
+  background-position: calc(100% - 15px) center, calc(100% - 10px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  transition: border-color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+}
+.pg-select:hover { border-color: var(--border-strong); }
+.pg-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* The open menu is drawn by the OS; these are the only two properties it
+   reliably honours, and without them a dark theme gets a white list. */
+.pg-select option { background: var(--surface-2); color: var(--text); }
+
+/* Number inputs get the same treatment so a settings row reads as one set
+   of controls rather than several. */
+.gen-grid .pg-input { background: var(--surface-2); }
+
+/* --- the stage --- */
+/* The picture is contained, never cropped or blown up past its own size. */
+.gen-canvas img { width: auto; height: auto; }
+
+/* A subject's own undesired content, shown under it. */
+.uc-block { margin-top: 10px; padding-top: 9px; border-top: 1px dashed var(--border); }
+.uc-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  color: var(--pin);
+  margin-bottom: 6px;
+}
+.raw-section + .raw-section { margin-top: 14px; }
+.raw-section .raw-head + .raw-box + .raw-head { margin-top: 12px; }
+
+/* The reference decides the output size, so it says so rather than letting
+   the size control disagree with it silently. */
+.gen-ref-size { font-size: 10.5px; color: var(--text-faint); margin: -4px 0 7px; }
+
+/* Offered only when a request actually reached NovelAI and came back
+   refused: the payload is the evidence, and without it a failure is
+   guesswork. */
+.gen-copyreq { margin-top: 8px; font-size: 11px; padding: 3px 9px; }
+
+/* --- what to do with a dropped image --- */
+
+.modal-panel.import { max-width: 480px; }
+.import-preview {
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  margin-bottom: 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.import-preview img { max-width: 100%; max-height: 220px; border-radius: var(--r-sm); }
+
+.import-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.import-actions .btn { flex: 1 1 auto; justify-content: center; }
+/* Greyed rather than hidden, so what NovelAI offers and what this app has
+   not built are both visible. */
+.import-actions .btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+.import-heading {
+  margin: 18px 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.import-sub { font-weight: 400; color: var(--text-dim); }
+
+.import-fields { display: flex; flex-direction: column; gap: 7px; }
+.import-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.import-check input { accent-color: var(--accent); }
+.import-check.sub { margin-left: 24px; font-size: 11.5px; color: var(--text-faint); }
+
+.import-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.import-hint { font-size: 11px; color: var(--text-faint); }

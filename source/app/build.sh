@@ -28,7 +28,7 @@ if [ -n "${RCEDIT:-}" ] && [ -f "${RCEDIT}" ]; then
     --set-version-string "ProductName" "NovelAI Tools" \
     --set-version-string "FileDescription" "A local gallery for your NovelAI images and prompts" \
     --set-version-string "CompanyName" "NovelAI Tools" \
-    --set-file-version "1.1" --set-product-version "1.1" \
+    --set-file-version "1.2.0" --set-product-version "1.2.0" \
     >/dev/null 2>&1 || echo "    (rcedit failed; continuing without icon)"
 fi
 

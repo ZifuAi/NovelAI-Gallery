@@ -34,7 +34,13 @@ type Server struct {
 	store   *Store
 	app     *App
 	updater *Updater
+	tokens  *tokenStore
+	pending *pendingStore
 	port    int
+	// naiEndpoint overrides NovelAI's address. Set only by tests; the
+	// client refuses any host but NovelAI's regardless.
+	naiEndpoint string
+	naiUserData string
 
 	// Buffered so a Reuse click doesn't block if the extension happens to
 	// be between long-polls; capacity 1 because only the most recent
@@ -542,6 +548,273 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/redo", func(w http.ResponseWriter, r *http.Request) {
 		label, ok := s.store.Redo()
 		writeJSON(w, 200, map[string]any{"ok": ok, "label": label, "state": s.store.UndoState()})
+	})
+
+	// --- generating through NovelAI's API ---------------------------------
+	//
+	// The second way images arrive. The extension is untouched and both
+	// paths end at the same Insert, so nothing downstream knows or cares
+	// which one a picture came from.
+
+	mux.HandleFunc("/api/nai/token", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			// Deliberately not the token itself. A page that can read it
+			// back is a page that can leak it, and nothing in the UI needs
+			// the value - only whether one is set.
+			writeJSON(w, 200, map[string]any{
+				"present":    s.tokens.Present(),
+				"protection": secretProtection(),
+			})
+		case http.MethodPost:
+			var body struct {
+				Token string `json:"token"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeErr(w, 400, "Invalid JSON")
+				return
+			}
+			if err := s.tokens.Set(body.Token); err != nil {
+				writeErr(w, 500, err.Error())
+				return
+			}
+			writeJSON(w, 200, map[string]any{"present": s.tokens.Present()})
+		case http.MethodDelete:
+			s.tokens.Set("")
+			writeJSON(w, 200, map[string]any{"present": false})
+		default:
+			writeErr(w, 405, "Method not allowed")
+		}
+	})
+
+	mux.HandleFunc("/api/nai/generate", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeErr(w, 405, "Method not allowed")
+			return
+		}
+		token, err := s.tokens.Get()
+		if err != nil {
+			writeErr(w, 401, err.Error())
+			return
+		}
+		var in GenerateRequest
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeErr(w, 400, "Invalid JSON")
+			return
+		}
+		if strings.TrimSpace(in.Prompt) == "" {
+			writeErr(w, 400, "There's no prompt to generate from")
+			return
+		}
+		in.fill()
+
+		// naiGenerate refuses any host but NovelAI's. The override exists so
+		// tests can drive the whole flow against a stand-in, and calls
+		// naiGenerateAt directly rather than widening the guard itself.
+		gen := func(g GenerateRequest) ([]byte, error) {
+			if s.naiEndpoint != "" {
+				return naiGenerateAt(s.naiEndpoint, token, g)
+			}
+			return naiGenerate(naiEndpoint, token, g)
+		}
+
+		// Generated images wait here rather than joining the library. They
+		// are shown on the Generate page and only filed away if you keep
+		// them, so a session of experiments doesn't silently become a
+		// hundred images you have to go and delete.
+		var made []*Pending
+		for i := 0; i < in.Count; i++ {
+			png, err := gen(in)
+			if err != nil {
+				// Hand back exactly what was sent. When NovelAI refuses
+				// something, the payload is the only evidence of why, and
+				// guessing from a status code has already cost enough time.
+				// It carries no token - that lives only in the header.
+				sent, _ := json.MarshalIndent(naiPayload(in), "", "  ")
+				if len(made) > 0 {
+					// Anything already generated is kept on the page: it
+					// cost Anlas whatever went wrong afterwards.
+					writeJSON(w, 207, map[string]any{
+						"images": made, "error": err.Error(), "request": string(sent),
+					})
+					return
+				}
+				writeJSON(w, 502, map[string]any{
+					"error": err.Error(), "request": string(sent),
+				})
+				return
+			}
+			p, err := s.pending.Add(png, Pending{
+				Prompt: in.Prompt, Negative: in.Negative, Model: in.Model,
+			})
+			if err != nil {
+				writeErr(w, 500, "Generated, but could not hold onto it: "+err.Error())
+				return
+			}
+			made = append(made, p)
+		}
+		writeJSON(w, 200, map[string]any{"images": made})
+	})
+
+	// Reading a PNG's prompt without keeping the file.
+	//
+	// Dropping a picture onto the generator is asking "what made this?",
+	// not "put this in my library" - so this parses and answers, and the
+	// bytes go no further.
+	mux.HandleFunc("/api/nai/inspect", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeErr(w, 405, "Method not allowed")
+			return
+		}
+		if err := r.ParseMultipartForm(64 << 20); err != nil {
+			writeErr(w, 400, "Invalid upload")
+			return
+		}
+		file, _, err := r.FormFile("file")
+		if err != nil {
+			writeErr(w, 400, "Missing file field")
+			return
+		}
+		defer file.Close()
+		data, err := io.ReadAll(io.LimitReader(file, 64<<20))
+		if err != nil {
+			writeErr(w, 400, "Could not read that file")
+			return
+		}
+		meta := extractMetadata(data)
+		if !meta.IsNovelAI && meta.Prompt == "" {
+			writeErr(w, 422, "That PNG has no NovelAI prompt in it")
+			return
+		}
+		writeJSON(w, 200, meta)
+	})
+
+	// How much Anlas is left, so the price on the button means something.
+	mux.HandleFunc("/api/nai/anlas", func(w http.ResponseWriter, r *http.Request) {
+		token, err := s.tokens.Get()
+		if err != nil || strings.TrimSpace(token) == "" {
+			writeJSON(w, 200, AnlasBalance{
+				Reason: "No NovelAI token saved — add one in Settings"})
+			return
+		}
+		// Same rule as generating: the token only ever goes to NovelAI.
+		// Tests point this elsewhere explicitly and knowingly.
+		endpoint := naiUserData
+		if s.naiUserData != "" {
+			endpoint = s.naiUserData
+		} else if !naiAllowedHost(endpoint) {
+			writeJSON(w, 200, AnlasBalance{Reason: "Endpoint not allowed"})
+			return
+		}
+		bal, err := naiFetchAnlas(endpoint, token)
+		if err != nil {
+			// Not being able to read the balance is not worth an error in
+			// anyone's face, but it is worth saying why on hover.
+			writeJSON(w, 200, AnlasBalance{Reason: err.Error()})
+			return
+		}
+		writeJSON(w, 200, bal)
+	})
+
+	// The session's generations, newest first.
+	mux.HandleFunc("/api/nai/pending", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, 200, s.pending.List())
+		case http.MethodDelete:
+			s.pending.Clear()
+			writeJSON(w, 200, map[string]bool{"ok": true})
+		default:
+			writeErr(w, 405, "Method not allowed")
+		}
+	})
+
+	mux.HandleFunc("/api/nai/pending/", func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/nai/pending/"), "/"), "/")
+		id := parts[0]
+		if id == "" || s.pending.Get(id) == nil {
+			writeErr(w, 404, "No such image")
+			return
+		}
+
+		// The picture itself, for the preview and the history strip.
+		if len(parts) == 2 && parts[1] == "file" {
+			http.ServeFile(w, r, s.pending.path(id))
+			return
+		}
+
+		// Keeping one: this is the only path by which a generated image
+		// enters the library, and it goes through the same Insert the
+		// extension uses.
+		if len(parts) == 2 && parts[1] == "keep" && r.Method == http.MethodPost {
+			if it := s.pending.Get(id); it != nil && it.SavedID != "" {
+				// Already kept. Saying so beats quietly making a duplicate.
+				writeJSON(w, 200, map[string]any{"id": it.SavedID, "already": true})
+				return
+			}
+			png, err := s.pending.Read(id)
+			if err != nil {
+				writeErr(w, 404, "That image is no longer here")
+				return
+			}
+			rec, err := s.store.Insert(png, &Source{CapturedBy: "generate"})
+			if err != nil {
+				writeErr(w, 500, err.Error())
+				return
+			}
+			// NovelAI stamps the prompt into the PNG, but if a future
+			// change ever stopped doing that, the app still knows what it
+			// asked for - and a saved image with no prompt is one search
+			// can never find again.
+			if it := s.pending.Get(id); it != nil {
+				s.store.FillMissingMeta(rec.ID, it.Prompt, it.Negative, it.Model)
+			}
+			s.pending.MarkSaved(id, rec.ID)
+			writeJSON(w, 200, map[string]any{"id": rec.ID, "record": rec})
+			return
+		}
+
+		if r.Method == http.MethodDelete {
+			s.pending.Discard(id)
+			writeJSON(w, 200, map[string]bool{"ok": true})
+			return
+		}
+
+		writeErr(w, 404, "Not found")
+	})
+
+	// --- prompt generator -------------------------------------------------
+	//
+	// Rolling itself happens in the browser; this is the durable half.
+
+	mux.HandleFunc("/api/promptgen", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, 200, s.store.PromptConfig())
+		case http.MethodPut:
+			var cfg PromptConfig
+			if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+				writeErr(w, 400, "Invalid JSON")
+				return
+			}
+			if len(cfg.Buckets) == 0 {
+				writeErr(w, 400, "That would leave nothing to roll from")
+				return
+			}
+			writeJSON(w, 200, s.store.SavePromptConfig(cfg))
+		default:
+			writeErr(w, 405, "Method not allowed")
+		}
+	})
+
+	// The tags this library actually uses, so the pools can be built from
+	// evidence rather than from a starter list someone else wrote.
+	mux.HandleFunc("/api/promptgen/mine", func(w http.ResponseWriter, r *http.Request) {
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		if limit <= 0 {
+			limit = 300
+		}
+		writeJSON(w, 200, s.store.MinedTags(limit))
 	})
 
 	// --- updates ----------------------------------------------------------

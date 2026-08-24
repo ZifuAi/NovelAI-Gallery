@@ -46,14 +46,20 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
 
-  if (p === '/api/update/state') return json(res, { version: '1.1', progress: fake.progress });
+  if (p === '/api/update/state') return json(res, { version: '1.2.0', progress: fake.progress });
   if (p === '/api/update/daily') return json(res, fake.daily);
   if (p === '/api/update/check') return json(res, { started: true });
-  if (p === '/api/update/download') { fake.downloadCalled = true; return json(res, { started: true }); }
+  if (p === '/api/update/download') {
+    fake.downloadCalled = true;
+    // The real updater flips straight to "downloading"; some checks rely
+    // on that, since the UI stops polling once the state settles.
+    if (fake.downloadProgress) fake.progress = fake.downloadProgress;
+    return json(res, { started: true });
+  }
   if (p === '/api/update/install') { fake.installCalled = true; return json(res, { ok: true }); }
   if (p === '/api/update/welcome') { const r = fake.welcome; fake.welcome = null; return json(res, { release: r }); }
 
-  if (p === '/api/health') return json(res, { ok: true, version: '1.1' });
+  if (p === '/api/health') return json(res, { ok: true, version: '1.2.0' });
   if (p === '/api/settings') return json(res, {
     theme: 'midnight', cardSize: 190, layout: 'waterfall', sort: 'newest',
     metaView: 'tags', flagNsfw: true, sidebarWidth: 232,
@@ -102,7 +108,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     fake.progress = {
       state: 'available',
       message: 'Build 1.2 is available',
-      release: { version: '1.2', tag: 'v1.2', name: 'Build 1.2', newer: true,
+      release: { version: '1.2.0', tag: 'v1.2', name: 'Build 1.2', newer: true,
         assetUrl: 'https://example.invalid/setup.exe', assetSize: 2516582,
         notes: '- a new thing', url: 'https://example.invalid/rel' },
     };
@@ -138,7 +144,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     // Half way.
     fake.progress = { state: 'downloading', message: 'Downloading…', percent: 50,
-      downloaded: 1258291, total: 2516582, release: { version: '1.2' } };
+      downloaded: 1258291, total: 2516582, release: { version: '1.2.0' } };
     await sleep(900);
     const width = await page.locator('#updateBarFill').evaluate((n) => n.style.width);
     check('the progress bar follows the download', width === '50%', `width was ${width}`);
@@ -148,7 +154,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     // Finished downloading: it should install without another click, since
     // the person already agreed to the update.
     fake.progress = { state: 'ready', message: 'Ready to install', percent: 100,
-      release: { version: '1.2' } };
+      release: { version: '1.2.0' } };
     await sleep(1500);
     check('a finished download installs itself', fake.installCalled === true);
     check('the overlay says it is installing',
@@ -162,7 +168,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     fake.daily = { first: true, autoUpdate: false };
     fake.progress = {
       state: 'available', message: 'Build 1.2 is available',
-      release: { version: '1.2', newer: true, assetUrl: 'https://example.invalid/setup.exe' },
+      release: { version: '1.2.0', newer: true, assetUrl: 'https://example.invalid/setup.exe' },
     };
     const p1 = await browser.newPage();
     await p1.goto(base);
@@ -178,7 +184,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     fake.progress = { state: 'idle' };
     fake.daily = { first: false, autoUpdate: false };
     fake.welcome = {
-      version: '1.2', name: 'Build 1.2', url: 'https://example.invalid/rel',
+      version: '1.2.0', name: 'Build 1.2', url: 'https://example.invalid/rel',
       notes: '### Added\n- Nested folders\n- **Undo** everywhere\n\nUse `Ctrl+Z`.',
     };
     const p2 = await browser.newPage();
@@ -208,7 +214,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // --- 5. release notes are data, not markup --------------------------
   {
-    fake.welcome = { version: '1.2', notes: 'Fixed <img src=x onerror="window.__x=1"> the thing' };
+    fake.welcome = { version: '1.2.0', notes: 'Fixed <img src=x onerror="window.__x=1"> the thing' };
     fake.daily = { first: false, autoUpdate: false };
     const p3 = await browser.newPage();
     await p3.goto(base);
@@ -229,25 +235,71 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     p4.on('pageerror', (e) => errors.push(e.message));
     await p4.goto(base);
     await sleep(600);
-    await p4.click('#settingsBtn');
+    await p4.click('#toolsSettingsBtn');
     await p4.click('.settings-tab[data-tab="about"]');
     await sleep(600);
 
     check('About shows which build this is',
-      (await p4.locator('#aboutVersion').textContent()).trim() === 'Build 1.1');
+      (await p4.locator('#aboutVersion').textContent()).trim() === 'Build 1.2.0');
     check('About has an automatic-updates toggle',
       await p4.locator('#autoUpdateSwitch .switch-input').count() === 1);
     check('About reports the check result',
       (await p4.locator('#updateStatus').textContent()).toLowerCase().includes('latest'));
     check('opening Settings raises no errors', errors.length === 0, errors.join('; '));
 
-    // With an update waiting, the button becomes the way to get it.
+    // With an update waiting there is a separate button for it, rather than
+    // a label that rewrites itself - the morphing one was easy to miss.
     fake.progress = { state: 'available', message: 'Build 1.2 is available',
-      release: { version: '1.2', newer: true, assetUrl: 'https://example.invalid/setup.exe' } };
+      release: { version: '1.2.0', newer: true, assetUrl: 'https://example.invalid/setup.exe' } };
     await p4.click('#checkUpdateBtn');
     await sleep(1500);
-    check('the check button turns into the update button',
-      (await p4.locator('#checkUpdateBtn').textContent()).includes('1.2'));
+    check('an install button appears when there is something to install',
+      await p4.locator('#installUpdateBtn').isVisible() &&
+      (await p4.locator('#installUpdateBtn').textContent()).includes('1.2'),
+      await p4.locator('#installUpdateBtn').textContent());
+    check('and Check for updates stays what it says it is',
+      (await p4.locator('#checkUpdateBtn').textContent()).trim() === 'Check for updates');
+
+    fake.progress = { state: 'uptodate', message: "You're on the latest build" };
+    await p4.click('#checkUpdateBtn');
+    await sleep(1500);
+    check('and it is hidden when there is nothing to install',
+      await p4.locator('#installUpdateBtn').isHidden());
+
+    // --- Install Latest -------------------------------------------------
+    // The one thing "Check for updates" cannot do: reinstall the published
+    // release when it is the build you are already on. Nothing is newer
+    // here, and it must still go through.
+    fake.downloadCalled = false; fake.installCalled = false;
+    const sameBuild = { version: '1.2.0', newer: false,
+      assetUrl: 'https://example.invalid/setup.exe' };
+    fake.progress = { state: 'uptodate', message: "You're on the latest build",
+      release: sameBuild };
+    fake.downloadProgress = { state: 'downloading', percent: 20, release: sameBuild };
+
+    check('Install Latest is offered even with nothing newer',
+      await p4.locator('#installLatestBtn').isVisible());
+    await p4.click('#installLatestBtn'); await sleep(500);
+    check('and it asks first, since the app restarts',
+      await p4.locator('#confirmModal').isVisible());
+    await p4.click('#confirmCancel'); await sleep(400);
+    check('cancelling downloads nothing', fake.downloadCalled === false);
+
+    await p4.click('#installLatestBtn'); await sleep(400);
+    await p4.click('#confirmOk');
+    await sleep(2500);
+    check('confirming fetches the release that is published now',
+      fake.downloadCalled === true);
+    check('and says which build it is fetching',
+      /1\.2\.0/.test(await p4.locator('#updateHeadline').textContent()),
+      await p4.locator('#updateHeadline').textContent());
+
+    fake.progress = { state: 'ready', message: 'Ready',
+      release: { version: '1.2.0', newer: false,
+        assetUrl: 'https://example.invalid/setup.exe' } };
+    await sleep(2500);
+    check('and installs it once it has come down', fake.installCalled === true);
+    check('with no page errors along the way', errors.length === 0, errors.join('; '));
     await p4.close();
   }
 

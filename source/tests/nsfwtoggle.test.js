@@ -59,9 +59,14 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
   const knob = () => page.locator('#nsfwToggle + .switch-track .switch-knob')
     .evaluate((n) => getComputedStyle(n).transform);
   const sub = () => page.locator('.nsfw-row-sub').textContent();
+  const nsfwLabel = () => page.locator('.nsfw-row-text').textContent();
 
   await openImage(safe.id);
   check('a safe image opens with the switch off', (await isOn()) === false);
+  // It is an action you take, not a state being reported - the state is the
+  // switch beside it.
+  check('the switch is labelled as something you do',
+    (await nsfwLabel()).trim().startsWith('Mark as NSFW'), (await nsfwLabel()).trim().slice(0, 40));
   check('and says the state came from the classifier',
     (await sub()).includes('automatically'));
 
@@ -138,7 +143,7 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
   await page.click('#viewMenuClear');
   await sleep(800);
   check('clicking it clears the filter without opening the menu',
-    await page.locator('.card').count() === 6 &&
+    await page.locator('.card').count() === 7 &&
     !(await page.locator('#viewMenu').isVisible()));
   check('and the clear button goes away with the filter',
     !(await page.locator('#viewMenuClear').isVisible()));
@@ -180,6 +185,30 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
     Math.max(dims.tw, dims.th) <= 640, JSON.stringify(dims));
   check('and keeps the original aspect ratio',
     Math.abs((dims.tw / dims.th) - (dims.fw / dims.fh)) < 0.01, JSON.stringify(dims));
+
+  // --- the tool tabs actually switch ------------------------------------
+  await page.keyboard.press('Escape'); await sleep(400);
+  check('the gallery is the tool on screen at startup',
+    await page.locator('#app').isVisible() &&
+    !(await page.locator('#toolPrompt').isVisible()));
+
+  await page.click('.tool-tab[data-tool="prompt"]');
+  await sleep(500);
+  check('switching tools hides the gallery',
+    !(await page.locator('#app').isVisible()),
+    'the gallery stayed on screen');
+  check('and shows the other tool',
+    await page.locator('#toolPrompt').isVisible());
+  check('the tab reads as selected',
+    await page.locator('.tool-tab[data-tool="prompt"]').evaluate(
+      (n) => n.classList.contains('active') && n.getAttribute('aria-selected') === 'true'));
+
+  await page.click('.tool-tab[data-tool="gallery"]');
+  await sleep(800);
+  check('and switching back brings the gallery and its images back',
+    await page.locator('#app').isVisible() &&
+    !(await page.locator('#toolPrompt').isVisible()) &&
+    await page.locator('.card').count() === 7);
 
   check('no page errors', errors.length === 0, errors.join(' | '));
 

@@ -93,7 +93,7 @@ const waitForServer = () => new Promise((resolve, reject) => {
   await sleep(900);
 
   // --- the gallery ------------------------------------------------------
-  check('every seeded image is on screen', await page.locator('.card').count() === 6);
+  check('every seeded image is on screen', await page.locator('.card').count() === 7);
   check('no page errors on first load', errors.length === 0, errors.join('\n        '));
 
   // Aspect ratios must survive the layout: the 1600x600 image has to be
@@ -128,7 +128,7 @@ const waitForServer = () => new Promise((resolve, reject) => {
       document.documentElement.scrollWidth - document.documentElement.clientWidth);
     const visible = await page.locator('.card').count();
     check(`${layout}: all images laid out, nothing overflows sideways`,
-      visible === 6 && overflow <= 1, `cards=${visible} overflowX=${overflow}`);
+      visible === 7 && overflow <= 1, `cards=${visible} overflowX=${overflow}`);
   }
 
   // --- nested folders ---------------------------------------------------
@@ -201,10 +201,10 @@ const waitForServer = () => new Promise((resolve, reject) => {
   // --- deleting an image is undoable ------------------------------------
   const victim = items[1];
   await page.evaluate((id) => fetch(`/api/images/${id}`, { method: 'DELETE' }), victim.id);
-  check('an image can be deleted', (await api('/api/images?limit=20')).total === 5);
+  check('an image can be deleted', (await api('/api/images?limit=20')).total === 6);
   await api('/api/undo', { method: 'POST' });
   const restored = await api('/api/images?limit=20');
-  check('undo brings the deleted image back', restored.total === 6);
+  check('undo brings the deleted image back', restored.total === 7);
   const back = restored.items.find((i) => i.id === victim.id);
   const png = await page.evaluate((id) => fetch(`/api/images/${id}/file`).then((r) => r.status), victim.id);
   check('and its file is back on disk too, not just its record', !!back && png === 200,
@@ -240,7 +240,7 @@ const waitForServer = () => new Promise((resolve, reject) => {
   check('Escape closes it', !(await page.locator('#viewMenu').isVisible()));
 
   // --- the settings tabs ------------------------------------------------
-  await page.click('#settingsBtn');
+  await page.click('#toolsSettingsBtn');
   await sleep(400);
   const tabs = await page.locator('.settings-tab').allTextContents();
   check('settings is split into four tabs', tabs.length === 4, tabs.join(', '));
@@ -252,7 +252,7 @@ const waitForServer = () => new Promise((resolve, reject) => {
     check(`the ${t} tab shows its own pane and only its own`, shown && others === 1);
   }
   check('About knows which build this is',
-    (await page.locator('#aboutVersion').textContent()).trim() === 'Build 1.1');
+    (await page.locator('#aboutVersion').textContent()).trim() === 'Build 1.2.0');
 
   await page.keyboard.press('Escape');
   await sleep(300);
