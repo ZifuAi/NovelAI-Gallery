@@ -1,10 +1,11 @@
+
 # NovelAI Gallery
 
 A local gallery for NovelAI images and prompts. Images are saved automatically with full metadata (prompt, seed, model, sampler, etc.) so you can search, organise, and reuse them.
 
 No account, no cloud, nothing running in the background. Small Windows app + browser extension.
 
-<img width="1254" height="745" alt="Screenshot 2026-08-24 160427" src="https://github.com/user-attachments/assets/65993895-cf79-40bc-964e-079c716e69f5" />
+<img width="1166" height="739" alt="Screenshot 2026-08-24 170221" src="https://github.com/user-attachments/assets/080266fb-df7d-40fc-b558-057b59e6f5c5" />
 
 ## Features
 
