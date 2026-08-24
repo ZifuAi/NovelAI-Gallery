@@ -25,9 +25,9 @@ if [ -n "${RCEDIT:-}" ] && [ -f "${RCEDIT}" ]; then
   echo "==> stamping icon + version info"
   ${WINE:-wine} "${RCEDIT}" novelai-gallery.exe \
     --set-icon icon.ico \
-    --set-version-string "ProductName" "NovelAI Gallery" \
+    --set-version-string "ProductName" "NovelAI Tools" \
     --set-version-string "FileDescription" "A local gallery for your NovelAI images and prompts" \
-    --set-version-string "CompanyName" "NovelAI Gallery" \
+    --set-version-string "CompanyName" "NovelAI Tools" \
     --set-file-version "1.1" --set-product-version "1.1" \
     >/dev/null 2>&1 || echo "    (rcedit failed; continuing without icon)"
 fi

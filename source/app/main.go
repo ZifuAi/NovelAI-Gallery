@@ -13,7 +13,13 @@ import (
 )
 
 const appVersion = "1.1"
-const appName = "NovelAI Gallery"
+const appName = "NovelAI Tools"
+
+// The folder the library lives in keeps its original name. Renaming it
+// would orphan every existing library on disk - the app would start up
+// looking at an empty folder while the user's images sat in the old one -
+// and there is nothing to gain from moving them.
+const dataDirName = "NovelAI Gallery"
 
 //go:embed all:web
 var embeddedWeb embed.FS
@@ -53,7 +59,7 @@ func dataDir() string {
 		home, _ := os.UserHomeDir()
 		base = filepath.Join(home, ".config")
 	}
-	return filepath.Join(base, "NovelAI Gallery")
+	return filepath.Join(base, dataDirName)
 }
 
 // unpackExtension writes the bundled extension next to the user's data so
@@ -124,6 +130,13 @@ func main() {
 			log.Println("serve:", err)
 		}
 	}()
+
+	// Bring an existing library up to date in the background. New captures
+	// get a thumbnail as they arrive; this is for everything from before
+	// thumbnails existed. Nothing waits on it - a missing thumbnail is
+	// generated on demand anyway, this just means the second scroll through
+	// an old library is fast rather than the tenth.
+	go store.BackfillThumbs()
 
 	url := fmt.Sprintf("http://127.0.0.1:%d/", srv.port)
 	log.Println("gallery running at", url)

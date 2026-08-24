@@ -266,6 +266,12 @@ func (s *Store) Insert(data []byte, src *Source) (*Record, error) {
 	s.byID[id] = r
 	s.byHash[hash] = r
 	s.saveIndex()
+
+	// Make the thumbnail off the hot path. Decoding a 3 MB PNG while
+	// holding the store lock would stall every other request for as long as
+	// it took, and the capture itself is already safely on disk by here.
+	go func() { _, _ = s.EnsureThumb(r) }()
+
 	return r, nil
 }
 

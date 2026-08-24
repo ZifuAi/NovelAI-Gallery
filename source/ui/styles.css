@@ -36,6 +36,7 @@
   --r-lg: 18px;
   --sidebar-w: 232px;
   --topbar-h: 62px;
+  --tools-h: 40px;
 
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
   --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.55);
@@ -70,6 +71,56 @@ button, input { font: inherit; color: inherit; }
 
 /* ---------------- Layout shell ---------------- */
 
+/* ---------------- Tool switcher ---------------- */
+
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--tools-h);
+  padding: 0 14px;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.tools-mark { width: 20px; height: 20px; border-radius: 6px; object-fit: contain; }
+.tools-name {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  margin-right: 8px;
+}
+.tools-tabs { display: flex; gap: 2px; }
+.tool-tab {
+  position: relative;
+  padding: 6px 13px;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 12.5px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.tool-tab:hover { color: var(--text); background: var(--surface-2); }
+.tool-tab.active { color: var(--accent); background: var(--accent-soft); }
+.tools-spacer { flex: 1; }
+
+/* A tool that is not the gallery gets the whole area below the strip. */
+.tool-pane {
+  height: calc(100vh - var(--tools-h));
+  overflow-y: auto;
+}
+.tool-empty {
+  max-width: 520px;
+  margin: 18vh auto 0;
+  padding: 0 24px;
+  text-align: center;
+}
+.tool-empty-title { font-size: 18px; font-weight: 650; margin-bottom: 10px; }
+.tool-empty-body { font-size: 13.5px; line-height: 1.7; color: var(--text-dim); }
+
 #app {
   display: grid;
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--inspector-w, 0px);
@@ -77,7 +128,7 @@ button, input { font: inherit; color: inherit; }
   grid-template-areas:
     "brand topbar topbar"
     "sidebar content inspector";
-  height: 100vh;
+  height: calc(100vh - var(--tools-h));
   transition: grid-template-columns 0.22s var(--ease);
 }
 #app.inspector-open { --inspector-w: 336px; }
@@ -2580,7 +2631,10 @@ button, input { font: inherit; color: inherit; }
    each pane made the tabs jump around under the pointer and the whole
    dialog flinch on every click, so the height is fixed and a tall pane
    scrolls inside it instead. */
-.modal-panel.settings { height: min(700px, 88vh); }
+/* Tall enough that no tab needs scrolling on a normal screen, and still
+   one fixed size so the window doesn't resize under the pointer as you
+   move between tabs. */
+.modal-panel.settings { height: min(880px, 92vh); }
 .settings-body {
   display: block;
   flex: 1;

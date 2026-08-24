@@ -9,9 +9,16 @@ SetCompressor /SOLID lzma
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
 
-!define APP_NAME     "NovelAI Gallery"
-!define APP_EXE      "NovelAI Gallery.exe"
+!define APP_NAME     "NovelAI Tools"
+!define APP_EXE      "NovelAI Tools.exe"
+; What the program used to be called. Kept so an upgrade from a Gallery
+; install can close the old process, remove its executable and clear its
+; shortcuts, instead of leaving a second copy behind under the old name.
+!define OLD_NAME     "NovelAI Gallery"
+!define OLD_EXE      "NovelAI Gallery.exe"
 !define APP_VERSION  "1.1"
+; Unchanged on purpose: this is how an existing install is found, so
+; renaming it would install a second copy alongside the first.
 !define APP_KEY      "NovelAIGallery"
 
 Name "${APP_NAME}"
@@ -63,7 +70,12 @@ Function .onInit
 
   ReadRegStr $0 HKCU "Software\${APP_KEY}" "InstallDir"
   StrCmp $0 "" checkDone 0
-    IfFileExists "$0\${APP_EXE}" 0 checkDone
+    ; Either name counts as an existing install. A copy from before the
+    ; rename has the old executable in it, and missing that would install a
+    ; second program instead of upgrading the first.
+    IfFileExists "$0\${APP_EXE}" foundInstall 0
+    IfFileExists "$0\${OLD_EXE}" foundInstall checkDone
+  foundInstall:
       StrCpy $INSTDIR $0
       StrCpy $Upgrading "1"
       ReadRegStr $PreviousVersion HKCU \
@@ -73,6 +85,8 @@ Function .onInit
   ; Whether upgrading or not, a running copy would lock the executable.
   ; taskkill is on every supported Windows and needs no plugin.
   nsExec::Exec 'taskkill /IM "${APP_EXE}" /F'
+  Pop $0
+  nsExec::Exec 'taskkill /IM "${OLD_EXE}" /F'
   Pop $0
   Sleep 400
 FunctionEnd
@@ -86,6 +100,14 @@ Section "Install"
   SetOutPath "$INSTDIR"
   File "/oname=${APP_EXE}" "novelai-gallery.exe"
   File "icon.ico"
+
+  ; Clear out the previous name so an upgrade doesn't leave a stale
+  ; executable and a shortcut that points at nothing.
+  Delete "$INSTDIR\${OLD_EXE}"
+  Delete "$DESKTOP\${OLD_NAME}.lnk"
+  Delete "$SMPROGRAMS\${OLD_NAME}\${OLD_NAME}.lnk"
+  Delete "$SMPROGRAMS\${OLD_NAME}\Uninstall ${OLD_NAME}.lnk"
+  RMDir  "$SMPROGRAMS\${OLD_NAME}"
 
   WriteRegStr HKCU "Software\${APP_KEY}" "InstallDir" "$INSTDIR"
 
@@ -138,16 +160,17 @@ Section "Uninstall"
   ; WebView2 falls back to this location for its cache when it can't write
   ; beside the executable, so clear both rather than guessing which applied.
   RMDir /r "$LOCALAPPDATA\${APP_NAME}"
+  RMDir /r "$LOCALAPPDATA\${OLD_NAME}"
 
   ; The library is the one thing that might be worth keeping, so it is the
   ; one thing we ask about. It defaults to No: a mis-click while
   ; uninstalling must not be able to delete a library someone spent months
   ; building.
   MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 \
-    "Also delete your saved images and settings?$\r$\n$\r$\nThis permanently removes the whole gallery from:$\r$\n$APPDATA\${APP_NAME}$\r$\n$\r$\nChoose No to keep them for a future reinstall." \
+    "Also delete your saved images and settings?$\r$\n$\r$\nThis permanently removes the whole gallery from:$\r$\n$APPDATA\${OLD_NAME}$\r$\n$\r$\nChoose No to keep them for a future reinstall." \
     IDNO KeepLibrary
 
-  RMDir /r "$APPDATA\${APP_NAME}"
+  RMDir /r "$APPDATA\${OLD_NAME}"
 
 KeepLibrary:
 SectionEnd

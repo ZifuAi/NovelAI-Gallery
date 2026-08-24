@@ -122,13 +122,14 @@ const el = {};
   'folderRootDrop', 'sidebarResizer',
   'importBtn', 'importInput', 'dropzone',
   'extModal', 'extBody', 'extClose', 'setupExtBtn', 'extStatus', 'extDot', 'extStatusText',
-  'viewMenuBtn', 'viewMenu', 'viewMenuLabel', 'viewMenuDot', 'layoutSwitch', 'selectBtn', 'deleteBtn', 'expandBtn',
+  'viewMenuBtn', 'viewMenu', 'viewMenuLabel', 'viewMenuDot', 'viewMenuClear', 'layoutSwitch', 'selectBtn', 'deleteBtn', 'expandBtn',
   'zoomView', 'zoomCanvas', 'zoomImg', 'zoomBack', 'zoomIn', 'zoomOut',
   'zoomLevel', 'zoomName', 'zoomHint',
   'bulkbar', 'bulkCount', 'bulkSelectAll', 'bulkPin', 'bulkFav',
   'bulkFolderBtn', 'bulkFolderMenu', 'bulkDelete', 'bulkClose',
   'clearGalleryBtn', 'clearCount',
   'confirmModal', 'confirmTitle', 'confirmBody', 'confirmOk', 'confirmCancel',
+  'toolTabs', 'toolPrompt',
   'askModal', 'askTitle', 'askSub', 'askInput', 'askError', 'askOk', 'askCancel',
 ].forEach((id) => { el[id] = $(id); });
 el.app = document.getElementById('app');
@@ -1098,7 +1099,11 @@ function card(record) {
   const img = document.createElement('img');
   img.loading = 'lazy';
   img.draggable = false; // the card owns the drag, not the bare image
-  img.src = `/api/images/${record.id}/file`;
+  // The grid loads a cached thumbnail, not the original. The full PNG is
+  // 1-3 MB and 1024px+; drawing thousands of those at 190px wide is what
+  // makes a large library crawl. The server falls back to the original if
+  // a thumbnail can't be made, so this is never a broken image.
+  img.src = `/api/images/${record.id}/thumb`;
   img.alt = nsfw ? 'Explicit image, hidden' : (record.meta?.prompt?.slice(0, 60) || '');
   div.appendChild(img);
 
@@ -2255,7 +2260,7 @@ function renderInspector() {
     el.inspectorBody.innerHTML = `<div class="empty-note">Select an image to see its prompt and settings here.</div>`;
     return;
   }
-  el.inspectorBody.innerHTML = `<img class="inspector-thumb" id="inspectorThumb" src="/api/images/${r.id}/file" alt="" />
+  el.inspectorBody.innerHTML = `<img class="inspector-thumb" id="inspectorThumb" src="/api/images/${r.id}/thumb" alt="" />
     <div id="inspectorMeta"></div>`;
   el.inspectorBody.querySelector('#inspectorThumb').addEventListener('click', () => openViewer(r));
   renderMetaInto(el.inspectorBody.querySelector('#inspectorMeta'), r, { showReuse: false });
@@ -2482,12 +2487,52 @@ function renderDetails() {
 }
 
 /**
+ * Apply changed fields to every copy of a record the UI is holding.
+ *
+ * The same image can be referenced from three places at once: the list
+ * behind the grid, the image open in the large view, and the one shown in
+ * the details panel. A background refresh replaces the list with freshly
+ * parsed objects, so after one has happened those references are no longer
+ * the same object - patching only the list left the open image showing its
+ * old state until it was closed and reopened.
+ */
+function patchRecord(id, patch) {
+  const targets = [
+    state.items.find((r) => r && r.id === id),
+    state.current && state.current.id === id ? state.current : null,
+    state.selected && state.selected.id === id ? state.selected : null,
+  ];
+  const seen = new Set();
+  for (const rec of targets) {
+    if (!rec || seen.has(rec)) continue;
+    seen.add(rec);
+    Object.assign(rec, patch);
+  }
+}
+
+/**
  * Set or clear a manual NSFW mark. Passing null hands the image back to
  * the classifier, which is what "reset" in the menu does.
  */
 async function setNSFW(ids, value) {
   const list = Array.isArray(ids) ? ids : [ids];
   if (!list.length) return;
+
+  // Show the change immediately rather than after the round trip. The
+  // server is on this machine so the wait is short, but "short" is still
+  // long enough to feel like the switch ignored the click - and the old
+  // value being re-rendered in the meantime is what made it look stuck.
+  // If the write fails the previous state is put back.
+  const before = list.map((id) => {
+    const r = state.items.find((x) => x && x.id === id)
+      || (state.current && state.current.id === id ? state.current : null);
+    return { id, nsfwManual: r ? r.nsfwManual : undefined };
+  });
+  list.forEach((id) => patchRecord(id, { nsfwManual: value }));
+  if (value) list.forEach((id) => state.revealed.delete(id));
+  render();
+  if (state.current && list.includes(state.current.id)) renderDetails();
+
   try {
     if (list.length === 1) {
       const body = value === null ? { nsfwClear: true } : { nsfw: value };
@@ -2498,24 +2543,22 @@ async function setNSFW(ids, value) {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const updated = await res.json();
-      const rec = state.items.find((r) => r.id === list[0]);
-      if (rec) {
-        rec.nsfwManual = updated.nsfwManual;
-        rec.nsfwAuto = updated.nsfwAuto;
-      }
+      patchRecord(list[0], {
+        nsfwManual: updated.nsfwManual,
+        nsfwAuto: updated.nsfwAuto,
+      });
     } else {
       await bulkRequest({ action: 'update', ids: list, nsfw: value });
-      list.forEach((id) => {
-        const rec = state.items.find((r) => r.id === id);
-        if (rec) rec.nsfwManual = value;
-      });
+      list.forEach((id) => patchRecord(id, { nsfwManual: value }));
     }
   } catch (e) {
+    // Put back exactly what was there, so the switch never shows a state
+    // the library does not actually have.
+    before.forEach(({ id, nsfwManual }) => patchRecord(id, { nsfwManual }));
+    render();
+    if (state.current && list.includes(state.current.id)) renderDetails();
     return toast('Could not change that');
   }
-
-  // Marking something explicit should hide it again straight away.
-  if (value) list.forEach((id) => state.revealed.delete(id));
 
   render();
   if (state.current && list.includes(state.current.id)) renderDetails();
@@ -2964,6 +3007,7 @@ function renderViewMenu() {
   const sortLabel = (SORTS.find(([id]) => id === state.settings.sort) || SORTS[0])[1];
   el.viewMenuLabel.textContent = sortLabel;
   el.viewMenuDot.hidden = !state.color;
+  el.viewMenuClear.hidden = !state.color;
   if (state.color) el.viewMenuDot.style.background = state.color;
   el.viewMenuBtn.classList.toggle('filtering', !!state.color);
 
@@ -3042,14 +3086,10 @@ async function setColorLabel(ids, color) {
       });
       if (!res.ok) throw new Error();
       const updated = await res.json();
-      const rec = state.items.find((r) => r.id === list[0]);
-      if (rec) rec.color = updated.color || '';
+      patchRecord(list[0], { color: updated.color || '' });
     } else {
       await bulkRequest({ action: 'update', ids: list, color });
-      list.forEach((id) => {
-        const rec = state.items.find((r) => r.id === id);
-        if (rec) rec.color = color;
-      });
+      list.forEach((id) => patchRecord(id, { color }));
     }
   } catch (e) {
     return toast('Could not set that colour');
@@ -3637,6 +3677,19 @@ el.checkUpdateBtn?.addEventListener('click', async () => {
   startUpdatePolling();
 });
 
+function clearColorFilter(e) {
+  if (e) { e.stopPropagation(); e.preventDefault(); }
+  if (!state.color) return;
+  state.color = null;
+  renderViewMenu();
+  load({ reset: true });
+  toast('Colour filter cleared');
+}
+el.viewMenuClear?.addEventListener('click', clearColorFilter);
+el.viewMenuClear?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') clearColorFilter(e);
+});
+
 el.updateToastGo?.addEventListener('click', beginUpdate);
 el.updateToastLater?.addEventListener('click', hideUpdateToast);
 el.updateToastClose?.addEventListener('click', hideUpdateToast);
@@ -3706,6 +3759,30 @@ async function maybeCheckDaily() {
     await new Promise((r) => setTimeout(r, 500));
   }
 }
+
+/* ------------------------------------------------------------------ tools
+
+   The gallery is one tool among several. Switching hides the gallery's
+   whole grid rather than unmounting it, so coming back is instant and no
+   scroll position, selection or open image is lost on the way. */
+
+function selectTool(name) {
+  document.querySelectorAll('.tool-tab').forEach((b) => {
+    const on = b.dataset.tool === name;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  el.app.hidden = name !== 'gallery';
+  el.toolPrompt.hidden = name !== 'prompt';
+  // The gallery's layouts are measured in JS, so anything that happened to
+  // the window while it was hidden has to be re-measured on the way back.
+  if (name === 'gallery') scheduleLayout();
+}
+
+el.toolTabs?.addEventListener('click', (e) => {
+  const tab = e.target.closest('.tool-tab');
+  if (tab) selectTool(tab.dataset.tool);
+});
 
 (async () => {
   await loadSettings();

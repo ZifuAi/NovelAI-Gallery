@@ -342,6 +342,24 @@ func (s *Server) routes() http.Handler {
 			return
 		}
 
+		// The gallery grid loads this instead of the original, which is the
+		// difference between a large library scrolling smoothly and the
+		// browser decoding thousands of full-resolution PNGs. If a
+		// thumbnail can't be made for any reason the original is served
+		// instead: the result is slower, never broken.
+		if len(parts) == 2 && parts[1] == "thumb" {
+			path, err := s.store.EnsureThumb(rec)
+			if err != nil {
+				http.ServeFile(w, r, s.store.ImagePath(rec))
+				return
+			}
+			// Thumbnails never change once made, so they can be cached hard.
+			w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+			w.Header().Set("ETag", `"`+rec.Hash+`-t"`)
+			http.ServeFile(w, r, path)
+			return
+		}
+
 		// Every captured image is an ordinary .png on disk, so "open in
 		// folder" can hand the user straight to it.
 		if len(parts) == 2 && parts[1] == "reveal" {

@@ -3,14 +3,26 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NovelAI Gallery</title>
+  <title>NovelAI Tools</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <!-- Tool switcher. The gallery is one tool among several now, so the app
+       name and the tabs live above everything rather than inside any one
+       tool's chrome. -->
+  <nav class="tools" id="toolTabs" role="tablist">
+    <img class="tools-mark" src="appicon.png" alt="" />
+    <div class="tools-name">NovelAI Tools</div>
+    <div class="tools-tabs">
+      <button class="tool-tab active" data-tool="gallery" role="tab" aria-selected="true">Gallery</button>
+      <button class="tool-tab" data-tool="prompt" role="tab" aria-selected="false">Prompt Generator</button>
+    </div>
+    <div class="tools-spacer"></div>
+  </nav>
+
   <div id="app">
     <div class="brand">
-      <img class="brand-mark" src="appicon.png" alt="" />
-      <div class="brand-name">NovelAI Gallery</div>
+      <div class="brand-name">Gallery</div>
     </div>
 
     <header class="topbar">
@@ -33,6 +45,10 @@
           </svg>
           <span id="viewMenuLabel">Newest first</span>
           <span class="viewmenu-dot" id="viewMenuDot" hidden></span>
+          <!-- Clearing the colour filter shouldn't mean opening the menu
+               and hunting for the right row. -->
+          <span class="viewmenu-clear" id="viewMenuClear" role="button" tabindex="0"
+            title="Clear colour filter" aria-label="Clear colour filter" hidden>×</span>
           <svg class="viewmenu-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
             <path d="M6 9l6 6 6-6"></path>
           </svg>
@@ -432,6 +448,19 @@
       </div>
     </div>
   </div>
+
+  <!-- Prompt Generator. Not built yet; this is the shell it will fill. -->
+  <section id="toolPrompt" class="tool-pane" hidden>
+    <div class="tool-empty">
+      <div class="tool-empty-title">Prompt Generator</div>
+      <div class="tool-empty-body">
+        Not built yet. It will roll random NovelAI prompts from pools you
+        control — artists, subjects, locations, actions, lighting — with a
+        slider to move between plain tags and natural language, and send
+        the result straight to a NovelAI tab.
+      </div>
+    </div>
+  </section>
 
   <!-- Naming things: new folders, renames, folder tags. Deliberately not
        window.prompt, which draws an operating-system box that ignores the
