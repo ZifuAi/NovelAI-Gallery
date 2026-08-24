@@ -4,6 +4,8 @@ A local gallery for NovelAI images and prompts. Images are saved automatically w
 
 No account, no cloud, nothing running in the background. Small Windows app + browser extension.
 
+<img width="1672" height="1047" alt="Screenshot 2026-08-24 160427" src="https://github.com/user-attachments/assets/11cc9cde-1c78-4442-bb26-a8f200419b16" />
+
 ## Features
 
 - Auto-saves every generation with prompt + settings baked into the PNG
