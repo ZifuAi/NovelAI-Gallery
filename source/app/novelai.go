@@ -494,6 +494,41 @@ type AnlasBalance struct {
 	// than swallowed, because "—" with no explanation is the thing that
 	// wasted an evening.
 	Reason string `json:"reason,omitempty"`
+
+	// What the account is, and what it gets for nothing.
+	//
+	// NovelAI's own documentation says Opus generates free when the image
+	// is one at a time, no larger than a Normal size, at most 28 steps, not
+	// worked from another picture, and on a V4.5-or-lower model. Those
+	// conditions are the published ones; the numbers behind them come from
+	// the account itself where the response carries them, so a change at
+	// their end does not leave this app quoting a stale rule.
+	Tier           int    `json:"tier"`
+	TierName       string `json:"tierName,omitempty"`
+	FreeGeneration bool   `json:"freeGeneration"`
+	FreeMaxPixels  int    `json:"freeMaxPixels,omitempty"`
+	FreeMaxSteps   int    `json:"freeMaxSteps,omitempty"`
+}
+
+// Opus's published free-generation limits, used when the account response
+// does not spell them out itself.
+const (
+	opusFreeMaxPixels = 1024 * 1024
+	opusFreeMaxSteps  = 28
+)
+
+func tierName(tier int) string {
+	switch tier {
+	case 0:
+		return "Paper"
+	case 1:
+		return "Tablet"
+	case 2:
+		return "Scroll"
+	case 3:
+		return "Opus"
+	}
+	return ""
 }
 
 func naiFetchAnlas(endpoint, token string) (AnlasBalance, error) {
@@ -524,14 +559,51 @@ func naiFetchAnlas(endpoint, token string) (AnlasBalance, error) {
 	// field is not.
 	var raw struct {
 		Subscription *struct {
+			Tier              *int `json:"tier"`
 			TrainingStepsLeft *struct {
 				Fixed     *int `json:"fixedTrainingStepsLeft"`
 				Purchased *int `json:"purchasedTrainingSteps"`
 			} `json:"trainingStepsLeft"`
+			Perks *struct {
+				UnlimitedImageGeneration *bool `json:"unlimitedImageGeneration"`
+				// Read for its numbers rather than relied upon: where the
+				// account states the size it generates free at, that is
+				// better than this app's copy of the published figure.
+				Limits []struct {
+					Resolution *int `json:"resolution"`
+					MaxPrompts *int `json:"maxPrompts"`
+				} `json:"unlimitedImageGenerationLimits"`
+			} `json:"perks"`
 		} `json:"subscription"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
 		return out, err
+	}
+	if raw.Subscription != nil {
+		out.Tier = -1
+		if raw.Subscription.Tier != nil {
+			out.Tier = *raw.Subscription.Tier
+			out.TierName = tierName(out.Tier)
+		}
+		p := raw.Subscription.Perks
+		if p != nil && p.UnlimitedImageGeneration != nil {
+			out.FreeGeneration = *p.UnlimitedImageGeneration
+		} else {
+			out.FreeGeneration = out.Tier == 3
+		}
+		if p != nil {
+			for _, l := range p.Limits {
+				if l.Resolution != nil && *l.Resolution > out.FreeMaxPixels {
+					out.FreeMaxPixels = *l.Resolution
+				}
+			}
+		}
+		if out.FreeGeneration {
+			if out.FreeMaxPixels == 0 {
+				out.FreeMaxPixels = opusFreeMaxPixels
+			}
+			out.FreeMaxSteps = opusFreeMaxSteps
+		}
 	}
 	if raw.Subscription == nil || raw.Subscription.TrainingStepsLeft == nil {
 		out.Reason = "NovelAI did not report a balance for this account"

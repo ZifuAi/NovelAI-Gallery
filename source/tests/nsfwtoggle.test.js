@@ -89,13 +89,17 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
   check('and the wording changes to say you set it', (await sub()).includes('Set by you'),
     await sub());
 
-  // The gallery behind it has to agree.
-  check('the card behind is covered now',
-    await page.locator(`.card[data-id="${safe.id}"] .nsfw-cover`).count() === 1);
+  // The gallery behind it has to agree. With the filter on, marking
+  // something moves it off All images and onto the NSFW shelf, so the card
+  // does not stay behind wearing a cover - it leaves.
+  await sleep(700);
+  check('the card behind leaves All images for the shelf',
+    await page.locator(`.card[data-id="${safe.id}"]`).count() === 0,
+    `${await page.locator(`.card[data-id="${safe.id}"]`).count()} cards still there`);
 
   // And back off again, still without reopening.
   await page.click('#nsfwToggle + .switch-track');
-  await sleep(900);
+  await sleep(1200);
   check('clicking again turns it off straight away', (await isOn()) === false);
   check('and uncovers the card behind',
     await page.locator(`.card[data-id="${safe.id}"] .nsfw-cover`).count() === 0);
@@ -143,7 +147,7 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
   await page.click('#viewMenuClear');
   await sleep(800);
   check('clicking it clears the filter without opening the menu',
-    await page.locator('.card').count() === 7 &&
+    await page.locator('.card').count() === 6 &&
     !(await page.locator('#viewMenu').isVisible()));
   check('and the clear button goes away with the filter',
     !(await page.locator('#viewMenuClear').isVisible()));
@@ -208,7 +212,8 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
   check('and switching back brings the gallery and its images back',
     await page.locator('#app').isVisible() &&
     !(await page.locator('#toolPrompt').isVisible()) &&
-    await page.locator('.card').count() === 7);
+    await page.locator('.card').count() === 6,
+    `${await page.locator('.card').count()} cards`);
 
   check('no page errors', errors.length === 0, errors.join(' | '));
 

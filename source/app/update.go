@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -110,6 +111,30 @@ func (u *Updater) set(p UpdateProgress) {
 	u.mu.Lock()
 	u.progress = p
 	u.mu.Unlock()
+}
+
+// versionFromTag pulls the version number out of whatever a release is
+// called.
+//
+// Releases here have been tagged "v1.2", "1.2.0" and "Build-1.2.0", and the
+// last of those is what broke it: trimming a leading "v" left the string
+// "Build-1.2.0", which compared as text against "1.2.0", came out greater,
+// and told everybody already on the newest build that an update was
+// waiting - called, in the notice, "Build Build-1.2.0". The number is the
+// only part that means anything, so the number is what is taken, from the
+// tag or, failing that, from the release's title.
+var versionDigits = regexp.MustCompile(`[0-9]+(?:\.[0-9]+)*`)
+
+func versionFromTag(tag, name string) string {
+	for _, s := range []string{tag, name} {
+		if v := versionDigits.FindString(s); v != "" {
+			return v
+		}
+	}
+	// Nothing numeric anywhere. Returned as-is so the release still has a
+	// name to show; whether it is newer is decided separately, and a
+	// version with no number in it is never treated as one.
+	return strings.TrimPrefix(strings.TrimSpace(tag), "v")
 }
 
 // compareVersions returns -1, 0 or 1 comparing dotted numeric versions.
@@ -221,7 +246,7 @@ func (u *Updater) checkAt(endpoint string) (*Release, error) {
 
 	rel := &Release{
 		Tag:     raw.TagName,
-		Version: strings.TrimPrefix(strings.TrimSpace(raw.TagName), "v"),
+		Version: versionFromTag(raw.TagName, raw.Name),
 		Name:    raw.Name,
 		Notes:   raw.Body,
 		URL:     raw.HTMLURL,
@@ -249,7 +274,12 @@ func (u *Updater) checkAt(endpoint string) (*Release, error) {
 			}
 		}
 	}
-	rel.Newer = compareVersions(rel.Version, appVersion) > 0
+	// A release has to carry a real version number to be newer than this
+	// build. Without this, a tag that is only words compares as text, comes
+	// out greater than "1.2.1", and nags everybody who is already up to
+	// date - which is exactly what happened.
+	rel.Newer = versionDigits.MatchString(rel.Version) &&
+		compareVersions(rel.Version, appVersion) > 0
 
 	u.mu.Lock()
 	u.latest = rel

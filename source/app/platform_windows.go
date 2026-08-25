@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -213,4 +214,33 @@ func runInstaller(path string) error {
 		os.Exit(0)
 	}()
 	return nil
+}
+
+// pickFolder opens Windows' own folder chooser.
+//
+// A WebView cannot hand back a real path - a file input gives a name, not a
+// location - so the dialog is asked for by the app itself. PowerShell is
+// used because it is present on every supported Windows and needs nothing
+// installed; if it is missing or the person closes the dialog, the path box
+// is still there to type into.
+func pickFolder(start string) (string, error) {
+	script := `Add-Type -AssemblyName System.Windows.Forms
+$d = New-Object System.Windows.Forms.FolderBrowserDialog
+$d.Description = 'Choose where to keep your images'
+$d.ShowNewFolderButton = $true
+if ('` + strings.ReplaceAll(start, "'", "''") + `' -ne '') { $d.SelectedPath = '` +
+		strings.ReplaceAll(start, "'", "''") + `' }
+if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.SelectedPath }`
+
+	cmd := exec.Command("powershell", "-NoProfile", "-STA", "-Command", script)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("could not open the folder chooser")
+	}
+	path := strings.TrimSpace(string(out))
+	if path == "" {
+		return "", fmt.Errorf("no folder chosen")
+	}
+	return path, nil
 }

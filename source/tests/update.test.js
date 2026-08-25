@@ -255,8 +255,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(1500);
     check('an install button appears when there is something to install',
       await p4.locator('#installUpdateBtn').isVisible() &&
-      (await p4.locator('#installUpdateBtn').textContent()).includes('1.2'),
+      /install latest/i.test(await p4.locator('#installUpdateBtn').textContent()),
       await p4.locator('#installUpdateBtn').textContent());
+    // The build number belongs in the status line, not on the button.
+    check('and the status line says which build it is',
+      /1\.2/.test(await p4.locator('#updateStatus').textContent()),
+      await p4.locator('#updateStatus').textContent());
     check('and Check for updates stays what it says it is',
       (await p4.locator('#checkUpdateBtn').textContent()).trim() === 'Check for updates');
 

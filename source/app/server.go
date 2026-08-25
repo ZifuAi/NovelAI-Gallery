@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -244,6 +245,7 @@ func (s *Server) routes() http.Handler {
 				Pinned:   q.Get("pinned") == "true",
 				Folder:   q.Get("folder"),
 				Color:    q.Get("color"),
+				NSFW:     q.Get("nsfw"),
 				Sort:     q.Get("sort"),
 				Limit:    limit,
 				Offset:   offset,
@@ -326,7 +328,14 @@ func (s *Server) routes() http.Handler {
 			writeJSON(w, 200, map[string]any{"ok": true, "deleted": s.store.BulkDelete(body.IDs)})
 			return
 		}
-		writeJSON(w, 200, map[string]any{"ok": true, "updated": s.store.BulkUpdate(body.BulkOp)})
+		updated := s.store.BulkUpdate(body.BulkOp)
+		// Filing a picture into a folder puts it under that folder's rules.
+		// Doing it here rather than inside BulkUpdate keeps the store's
+		// bulk edit one plain operation and stops it calling itself.
+		for _, fid := range body.AddFolders {
+			s.store.InheritFolderProps(fid, body.IDs)
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "updated": updated})
 	})
 
 	mux.HandleFunc("/api/images/", func(w http.ResponseWriter, r *http.Request) {
@@ -411,9 +420,67 @@ func (s *Server) routes() http.Handler {
 	// the images are real files, not something locked inside the app.
 	mux.HandleFunc("/api/storage", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{
-			"dataDir":   s.app.DataDir,
-			"imagesDir": s.store.imagesDir,
+			"dataDir":    s.app.DataDir,
+			"imagesDir":  s.store.ImagesDir(),
+			"defaultDir": filepath.Join(s.app.DataDir, "images"),
 		})
+	})
+
+	// Moving the library somewhere else - another drive, usually, which is
+	// the whole reason this exists.
+	mux.HandleFunc("/api/storage/move", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeErr(w, 405, "Method not allowed")
+			return
+		}
+		var body struct {
+			Path string `json:"path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, 400, "Invalid JSON")
+			return
+		}
+		// An empty path means "back to the default folder", so first-run can
+		// offer the default as a real choice rather than a special case.
+		dest := strings.TrimSpace(body.Path)
+		if dest == "" {
+			dest = filepath.Join(s.app.DataDir, "images")
+		}
+		moved, at, err := s.store.MoveImages(dest)
+		if err != nil {
+			writeJSON(w, 400, map[string]any{"error": err.Error(), "moved": moved})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "moved": moved, "imagesDir": at})
+	})
+
+	// Opening the folder in Explorer, for when what someone wants is the
+	// files rather than the gallery.
+	mux.HandleFunc("/api/storage/open", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeErr(w, 405, "Method not allowed")
+			return
+		}
+		if err := revealInFileManager(s.store.ImagesDir()); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"ok": true})
+	})
+
+	// The system's own folder picker, so a path can be chosen rather than
+	// typed. Where there isn't one, the box is typed into instead.
+	mux.HandleFunc("/api/storage/browse", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeErr(w, 405, "Method not allowed")
+			return
+		}
+		path, err := pickFolder(s.store.ImagesDir())
+		if err != nil {
+			writeJSON(w, 200, map[string]any{"path": "", "error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"path": path})
 	})
 
 	// --- folders ---------------------------------------------------------
@@ -425,12 +492,34 @@ func (s *Server) routes() http.Handler {
 			var body struct {
 				Name   string `json:"name"`
 				Parent string `json:"parentId"`
+				// Set at creation, so a folder made for one thing carries
+				// its rules from the first picture that lands in it rather
+				// than from whenever somebody remembers to set them.
+				Color string   `json:"color"`
+				NSFW  bool     `json:"nsfw"`
+				Tags  []string `json:"tags"`
 			}
 			json.NewDecoder(r.Body).Decode(&body)
 			f, err := s.store.CreateFolderIn(body.Name, body.Parent)
 			if err != nil {
 				writeErr(w, 400, err.Error())
 				return
+			}
+			if body.Color != "" || body.NSFW || len(body.Tags) > 0 {
+				props := FolderProps{}
+				if body.Color != "" {
+					props.Color = &body.Color
+				}
+				if body.NSFW {
+					props.NSFW = &body.NSFW
+				}
+				if len(body.Tags) > 0 {
+					props.Tags = &body.Tags
+				}
+				if _, err := s.store.SetFolderProps(f.ID, props); err != nil {
+					writeErr(w, 400, err.Error())
+					return
+				}
 			}
 			writeJSON(w, 201, f)
 		default:
@@ -493,27 +582,23 @@ func (s *Server) routes() http.Handler {
 			w.WriteHeader(204)
 
 		case r.Method == http.MethodPatch && action == "":
-			var body struct {
-				Name *string   `json:"name"`
-				Tags *[]string `json:"tags"`
-			}
+			// Name, tags, colour and the NSFW flag all arrive together
+			// from the properties window; each is optional, and the ones
+			// that are inherited are pushed onto the folder's images.
+			var body FolderProps
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				writeErr(w, 400, "Invalid JSON")
 				return
 			}
-			if body.Name != nil {
-				if err := s.store.RenameFolder(id, *body.Name); err != nil {
-					writeErr(w, 400, err.Error())
-					return
-				}
+			applied, err := s.store.SetFolderProps(id, body)
+			if err != nil {
+				writeErr(w, 400, err.Error())
+				return
 			}
-			if body.Tags != nil {
-				if err := s.store.SetFolderTags(id, *body.Tags); err != nil {
-					writeErr(w, 400, err.Error())
-					return
-				}
-			}
-			writeJSON(w, 200, s.store.FolderTree())
+			writeJSON(w, 200, map[string]any{
+				"folders": s.store.FolderTree(),
+				"applied": applied,
+			})
 
 		case r.Method == http.MethodPost && action == "move":
 			var body struct {

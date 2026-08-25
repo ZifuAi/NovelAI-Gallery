@@ -159,6 +159,20 @@
           <span class="nav-label">Pinned</span>
           <span class="nav-count" id="countPin"></span>
         </button>
+        <!-- Only exists while the NSFW filter is on. With the filter off
+             there is nothing to separate, and a shelf that is always there
+             would be a permanent label on a library that may not have
+             anything to put on it. -->
+        <button class="nav-item nav-nsfw" data-view="nsfw" id="navNsfw" hidden>
+          <span class="nav-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"></path>
+              <path d="M4 4l16 16"></path>
+            </svg>
+          </span>
+          <span class="nav-label">NSFW</span>
+          <span class="nav-count" id="countNsfw"></span>
+        </button>
       </div>
 
       <div class="folder-section">
@@ -269,6 +283,19 @@
           <div class="settings-group">
             <div class="settings-legend">Explicit content</div>
             <div id="nsfwSwitch"></div>
+          </div>
+
+          <div class="settings-group">
+            <div class="settings-legend">Where your images are kept</div>
+            <div class="store-row">
+              <code class="store-path" id="storePath">…</code>
+            </div>
+            <div class="store-actions">
+              <button class="btn" id="storeMoveBtn">Move…</button>
+              <button class="btn" id="storeOpenBtn"
+                title="Open this folder in Explorer">Open folder</button>
+              <span class="store-note" id="storeNote"></span>
+            </div>
           </div>
 
           <div class="settings-group">
@@ -598,11 +625,20 @@
       <div class="gen-block" id="genTokenCard">
         <div class="gen-block-head">
           <span class="gen-block-title">API token</span>
-          <span class="gen-anlas" id="genAnlas" hidden></span>
           <span class="gen-token-state" id="genTokenState"></span>
           <button class="btn" id="genTokenSettings">Settings</button>
         </div>
         <div class="gen-note" id="genTokenNote"></div>
+        <!-- The balance gets its own line rather than a badge squeezed into
+             the header: it is a number people watch, and it changes. -->
+        <div class="anlas-row">
+          <span class="gen-anlas" id="genAnlas" hidden></span>
+          <span class="anlas-delta" id="genAnlasDelta" hidden></span>
+          <span class="anlas-split" id="genAnlasSplit"></span>
+          <div class="topbar-spacer"></div>
+          <button class="pg-icon" id="genAnlasRefresh"
+            title="Check the balance with NovelAI again" aria-label="Refresh balance">⟳</button>
+        </div>
       </div>
 
       <div class="gen-block">
@@ -926,6 +962,90 @@
         <div class="ask-actions">
           <button class="btn" id="askCancel">Cancel</button>
           <button class="btn primary" id="askOk">Create</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Choosing where the library lives. Used by first-run setup and by
+       the Move button in Settings; the same window either way, because it
+       is the same question. -->
+  <div id="storeModal" class="modal" hidden>
+    <div class="modal-panel folderprops">
+      <div class="modal-body">
+        <div class="ask-title" id="storeTitle">Where should your images be kept?</div>
+        <div class="ask-sub" id="storeSub"></div>
+
+        <div class="store-choice">
+          <label class="store-opt">
+            <input type="radio" name="storeWhere" value="default" checked />
+            <span class="store-opt-text">
+              <span class="store-opt-title">The default folder</span>
+              <span class="store-opt-desc" id="storeDefaultPath"></span>
+            </span>
+          </label>
+          <label class="store-opt">
+            <input type="radio" name="storeWhere" value="custom" />
+            <span class="store-opt-text">
+              <span class="store-opt-title">A folder I choose</span>
+              <span class="store-opt-desc">
+                Another drive, if that is where the room is. Everything else —
+                your index, folders and settings — stays where it is.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        <div class="store-custom" id="storeCustomRow" hidden>
+          <input class="ask-input" id="storePathInput" type="text" spellcheck="false"
+            autocomplete="off" placeholder="D:\NovelAI\Images" />
+          <button class="btn" id="storeBrowse">Browse…</button>
+        </div>
+
+        <div class="ask-error" id="storeError" hidden></div>
+        <div class="ask-actions">
+          <button class="btn" id="storeCancel">Cancel</button>
+          <button class="btn primary" id="storeOk">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- A folder's own properties. What is set here is passed on to the
+       images filed in the folder, which is the point of setting it on the
+       folder rather than on each picture. -->
+  <div id="folderModal" class="modal" hidden>
+    <div class="modal-panel folderprops">
+      <div class="modal-body">
+        <div class="ask-title" id="folderPropsTitle">Folder properties</div>
+        <div class="ask-sub" id="folderPropsSub"></div>
+
+        <label class="fp-label" for="folderPropsName">Name</label>
+        <input class="ask-input" id="folderPropsName" type="text" spellcheck="false" autocomplete="off" />
+
+        <label class="fp-label">Colour label</label>
+        <div class="fp-colors" id="folderPropsColors"></div>
+
+        <label class="fp-label" for="folderPropsTags">Tags</label>
+        <input class="ask-input" id="folderPropsTags" type="text" spellcheck="false"
+          autocomplete="off" placeholder="comma, separated" />
+
+        <label class="switch-row fp-nsfw">
+          <input type="checkbox" class="switch-input" id="folderPropsNsfw" />
+          <span class="switch-track"><span class="switch-knob"></span></span>
+          <span class="switch-text">
+            <span class="switch-title">Everything in here is NSFW</span>
+            <span class="switch-desc">
+              Images filed here are marked NSFW, now and as they arrive.
+              Turning this off later leaves what is already marked alone.
+            </span>
+          </span>
+        </label>
+
+        <div class="ask-error" id="folderPropsError" hidden></div>
+        <div class="ask-actions">
+          <button class="btn" id="folderPropsCancel">Cancel</button>
+          <button class="btn primary" id="folderPropsOk">Save</button>
         </div>
       </div>
     </div>

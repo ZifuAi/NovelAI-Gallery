@@ -77,3 +77,8 @@ func fatal(msg string) {
 func runInstaller(path string) error {
 	return fmt.Errorf("updates can only be installed on Windows")
 }
+
+// pickFolder is Windows-only; everywhere else the path is typed in.
+func pickFolder(start string) (string, error) {
+	return "", fmt.Errorf("choose the folder by typing its path")
+}

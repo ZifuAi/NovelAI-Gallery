@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 )
 
-const appVersion = "1.2.0"
+const appVersion = "1.2.1"
 const appName = "NovelAI Tools"
 
 // The folder the library lives in keeps its original name. Renaming it
@@ -112,6 +112,16 @@ func main() {
 	store, err := NewStore(filepath.Join(data, "gallery-storage"))
 	if err != nil {
 		fatal("Could not open your gallery storage:\n" + err.Error())
+	}
+
+	// A library kept somewhere else - another drive, usually. If that place
+	// has gone, an external disk that is not plugged in being the obvious
+	// case, the app opens on the default folder rather than refusing to
+	// start, and says so in the log.
+	if dir := store.Settings().ImagesDir; dir != "" {
+		if err := store.UseImagesDir(dir); err != nil {
+			log.Println("could not use the saved image folder:", err)
+		}
 	}
 
 	// Tests point this at a stand-in for NovelAI so the whole flow can be

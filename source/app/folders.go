@@ -127,6 +127,128 @@ func (s *Store) nextOrder(parent string) int {
 	return max + 1
 }
 
+// FolderProps is what a folder passes on: its name, its text tags, the
+// colour label its images take, and whether they count as NSFW. Every
+// field is a pointer so "leave this alone" is distinct from "set it to
+// nothing" - clearing a colour and not mentioning it are different asks.
+type FolderProps struct {
+	Name  *string   `json:"name"`
+	Tags  *[]string `json:"tags"`
+	Color *string   `json:"color"`
+	NSFW  *bool     `json:"nsfw"`
+}
+
+// SetFolderProps updates a folder and passes the inherited parts on to the
+// images filed directly in it. It returns how many images changed.
+//
+// Direct members only, not the whole subtree: a subfolder has properties of
+// its own, and quietly overwriting them from a parent would lose a choice
+// somebody made deliberately.
+func (s *Store) SetFolderProps(id string, p FolderProps) (int, error) {
+	if p.Name != nil {
+		if err := s.RenameFolder(id, *p.Name); err != nil {
+			return 0, err
+		}
+	}
+	if p.Tags != nil {
+		if err := s.SetFolderTags(id, *p.Tags); err != nil {
+			return 0, err
+		}
+	}
+
+	s.mu.Lock()
+	f := s.folderByID(id)
+	if f == nil {
+		s.mu.Unlock()
+		return 0, fmt.Errorf("No such folder")
+	}
+	if p.Color != nil {
+		f.Color = strings.TrimSpace(*p.Color)
+	}
+	if p.NSFW != nil {
+		f.NSFW = *p.NSFW
+	}
+	if p.Color != nil || p.NSFW != nil {
+		s.folderGen++
+		s.saveFolders()
+	}
+	color, nsfw := f.Color, f.NSFW
+	s.mu.Unlock()
+
+	if p.Color == nil && p.NSFW == nil {
+		return 0, nil
+	}
+	return s.applyFolderProps(id, color, nsfw, p.Color != nil, p.NSFW != nil), nil
+}
+
+// applyFolderProps writes a folder's inherited properties onto the images
+// filed directly in it. It goes through BulkUpdate, so it lands in the undo
+// history as one step - the same as doing it by hand would.
+func (s *Store) applyFolderProps(id, color string, nsfw, setColor, setNSFW bool) int {
+	s.mu.Lock()
+	ids := []string{}
+	for _, r := range s.records {
+		if r == nil {
+			continue
+		}
+		for _, fid := range r.Folders {
+			if fid == id {
+				ids = append(ids, r.ID)
+				break
+			}
+		}
+	}
+	s.mu.Unlock()
+	if len(ids) == 0 {
+		return 0
+	}
+
+	op := BulkOp{IDs: ids}
+	if setColor {
+		c := color
+		op.Color = &c
+	}
+	// Only ever marks. Clearing a folder's flag leaves what is inside
+	// marked rather than declaring a pile of pictures safe on the strength
+	// of a checkbox - that is the mistake you cannot spot by looking.
+	if setNSFW && nsfw {
+		v := true
+		op.NSFW = &v
+	}
+	if op.Color == nil && op.NSFW == nil {
+		return 0
+	}
+	return s.BulkUpdate(op)
+}
+
+// InheritFolderProps applies a folder's colour and NSFW flag to images that
+// have just been filed into it, so a folder's rules hold for what arrives
+// later as well as for what was there when they were set.
+func (s *Store) InheritFolderProps(folderID string, ids []string) int {
+	s.mu.Lock()
+	f := s.folderByID(folderID)
+	if f == nil {
+		s.mu.Unlock()
+		return 0
+	}
+	color, nsfw := f.Color, f.NSFW
+	s.mu.Unlock()
+
+	if color == "" && !nsfw {
+		return 0
+	}
+	op := BulkOp{IDs: ids}
+	if color != "" {
+		c := color
+		op.Color = &c
+	}
+	if nsfw {
+		v := true
+		op.NSFW = &v
+	}
+	return s.BulkUpdate(op)
+}
+
 func (s *Store) CreateFolderIn(name, parent string) (*Folder, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {

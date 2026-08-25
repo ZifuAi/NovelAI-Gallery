@@ -52,9 +52,12 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
   await page.waitForSelector('.card'); await sleep(900);
 
   const folderNames = () => page.locator('#folderList .folder-row .nav-label').allTextContents();
+  // Folders are made and edited in one properties window now: name, colour,
+  // tags and the NSFW flag together, rather than a rename box with three
+  // menu entries beside it that nobody found.
   const typeAndConfirm = async (text) => {
-    await page.fill('#askInput', text);
-    await page.click('#askOk');
+    await page.fill('#folderPropsName', text);
+    await page.click('#folderPropsOk');
     await sleep(700);
   };
 
@@ -62,11 +65,14 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
   await page.click('#addFolderBtn');
   await sleep(400);
   check('the + button opens the app’s own dialog, not the browser’s',
-    await page.locator('#askModal').isVisible() && nativeDialogs === 0);
+    await page.locator('#folderModal').isVisible() && nativeDialogs === 0);
   check('the dialog says what it is for',
-    (await page.locator('#askTitle').textContent()).trim() === 'New folder');
-  check('and its input is focused ready to type',
-    await page.evaluate(() => document.activeElement?.id === 'askInput'));
+    (await page.locator('#folderPropsTitle').textContent()).trim() === 'New folder');
+  check('and its name box is focused ready to type',
+    await page.evaluate(() => document.activeElement?.id === 'folderPropsName'));
+  check('with the colour and NSFW choices there from the start',
+    await page.locator('#folderPropsColors .fp-swatch').count() > 1 &&
+    await page.locator('#folderPropsNsfw').count() === 1);
 
   await typeAndConfirm('Characters');
   check('a folder is actually created', (await folderNames()).includes('Characters'),
@@ -74,32 +80,32 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
 
   // --- Enter submits, Escape cancels -------------------------------------
   await page.click('#addFolderBtn'); await sleep(350);
-  await page.fill('#askInput', 'Landscapes');
+  await page.fill('#folderPropsName', 'Landscapes');
   await page.keyboard.press('Enter');
   await sleep(700);
   check('Enter creates it too', (await folderNames()).includes('Landscapes'));
 
   await page.click('#addFolderBtn'); await sleep(350);
-  await page.fill('#askInput', 'Never made');
+  await page.fill('#folderPropsName', 'Never made');
   await page.keyboard.press('Escape');
   await sleep(500);
   check('Escape cancels without creating anything',
-    !(await folderNames()).includes('Never made') && !(await page.locator('#askModal').isVisible()));
+    !(await folderNames()).includes('Never made') && !(await page.locator('#folderModal').isVisible()));
 
   // --- a duplicate name is explained in place ----------------------------
   await page.click('#addFolderBtn'); await sleep(350);
-  await page.fill('#askInput', 'Characters');
-  await page.click('#askOk');
+  await page.fill('#folderPropsName', 'Characters');
+  await page.click('#folderPropsOk');
   await sleep(700);
   check('a duplicate name is refused',
-    await page.locator('#askModal').isVisible() &&
-    await page.locator('#askError').isVisible());
+    await page.locator('#folderModal').isVisible() &&
+    await page.locator('#folderPropsError').isVisible());
   check('and the dialog stays open with what you typed still there',
-    (await page.inputValue('#askInput')) === 'Characters');
-  await page.fill('#askInput', 'Portraits');
-  await page.click('#askOk'); await sleep(700);
+    (await page.inputValue('#folderPropsName')) === 'Characters');
+  await page.fill('#folderPropsName', 'Portraits');
+  await page.click('#folderPropsOk'); await sleep(700);
   check('correcting it works without starting over',
-    (await folderNames()).includes('Portraits') && !(await page.locator('#askModal').isVisible()));
+    (await folderNames()).includes('Portraits') && !(await page.locator('#folderModal').isVisible()));
 
   // --- subfolders, through the right-click menu --------------------------
   const row = (name) => page.locator('#folderList .folder-row', { hasText: name }).first();
@@ -108,8 +114,8 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
   await page.locator('#ctxMenu .ctx-item', { hasText: 'New subfolder' }).click();
   await sleep(400);
   check('the subfolder dialog names its parent',
-    (await page.locator('#askSub').textContent()).includes('Characters'),
-    await page.locator('#askSub').textContent());
+    (await page.locator('#folderPropsSub').textContent()).includes('Characters'),
+    await page.locator('#folderPropsSub').textContent());
   await typeAndConfirm('Headshots');
 
   const names = await folderNames();
@@ -134,32 +140,36 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
   await typeAndConfirm('Headshots');
   check('the same name is allowed in a different parent',
     (await page.locator('#folderList .folder-row .nav-label', { hasText: 'Headshots' }).count()) === 2 &&
-    !(await page.locator('#askModal').isVisible()));
+    !(await page.locator('#folderModal').isVisible()));
 
-  // --- renaming ----------------------------------------------------------
+  // --- properties: renaming ----------------------------------------------
   await row('Landscapes').click({ button: 'right' }); await sleep(400);
-  await page.locator('#ctxMenu .ctx-item', { hasText: 'Rename' }).click();
+  check('the menu offers properties rather than only a rename',
+    await page.locator('#ctxMenu .ctx-item', { hasText: 'Properties' }).count() === 1);
+  check('and rename is no longer a separate entry',
+    await page.locator('#ctxMenu .ctx-item', { hasText: /^Rename/ }).count() === 0);
+  await page.locator('#ctxMenu .ctx-item', { hasText: 'Properties' }).click();
   await sleep(400);
-  check('rename opens with the current name filled in',
-    (await page.inputValue('#askInput')) === 'Landscapes');
+  check('properties opens with the current name filled in',
+    (await page.inputValue('#folderPropsName')) === 'Landscapes');
   await typeAndConfirm('Scenery');
   check('renaming works', (await folderNames()).includes('Scenery') &&
     !(await folderNames()).includes('Landscapes'));
 
-  // Double-click renames too, the way a file manager does.
+  // Double-click opens it too, the way a file manager does.
   await row('Scenery').dblclick();
   await sleep(500);
-  check('double-clicking a folder opens rename',
-    await page.locator('#askModal').isVisible() &&
-    (await page.inputValue('#askInput')) === 'Scenery');
+  check('double-clicking a folder opens its properties',
+    await page.locator('#folderModal').isVisible() &&
+    (await page.inputValue('#folderPropsName')) === 'Scenery');
   await page.keyboard.press('Escape'); await sleep(400);
 
-  // --- tags --------------------------------------------------------------
+  // --- properties: tags ---------------------------------------------------
   await row('Scenery').click({ button: 'right' }); await sleep(400);
-  await page.locator('#ctxMenu .ctx-item', { hasText: 'Tags' }).click();
+  await page.locator('#ctxMenu .ctx-item', { hasText: 'Properties' }).click();
   await sleep(400);
-  check('tags open in the same themed dialog', await page.locator('#askModal').isVisible());
-  await typeAndConfirm('outdoors, reference');
+  await page.fill('#folderPropsTags', 'outdoors, reference');
+  await page.click('#folderPropsOk'); await sleep(700);
   const tags = await fetch(`${BASE}api/folders`).then(r => r.json());
   const scenery = tags.find((f) => f.name === 'Scenery');
   check('tags are saved', JSON.stringify(scenery.tags) === '["outdoors","reference"]',
@@ -169,18 +179,68 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
 
   // Clearing them is a real answer, not an empty form.
   await row('Scenery').click({ button: 'right' }); await sleep(400);
-  await page.locator('#ctxMenu .ctx-item', { hasText: 'Tags' }).click();
+  await page.locator('#ctxMenu .ctx-item', { hasText: 'Properties' }).click();
   await sleep(400);
-  await page.fill('#askInput', '');
-  await page.click('#askOk'); await sleep(700);
+  await page.fill('#folderPropsTags', '');
+  await page.click('#folderPropsOk'); await sleep(700);
   const cleared = (await fetch(`${BASE}api/folders`).then(r => r.json())).find((f) => f.name === 'Scenery');
   check('and an empty box clears them rather than being ignored',
-    (cleared.tags || []).length === 0 && !(await page.locator('#askModal').isVisible()));
+    (cleared.tags || []).length === 0 && !(await page.locator('#folderModal').isVisible()));
 
   // --- undo covers all of it ---------------------------------------------
   await page.keyboard.press('Control+z'); await sleep(800);
   const back = (await fetch(`${BASE}api/folders`).then(r => r.json())).find((f) => f.name === 'Scenery');
   check('undo brings the tags back', (back.tags || []).length === 2, JSON.stringify(back.tags));
+
+  // --- what a folder passes on to what is filed in it ---------------------
+  //
+  // The point of setting a colour and an NSFW flag on the folder is that
+  // every picture in it takes them, so they do not have to be set one at a
+  // time - and that what arrives later takes them too.
+  const someImages = (await fetch(`${BASE}api/images?limit=3`).then(r => r.json())).items.map((i) => i.id);
+  await fetch(`${BASE}api/images/bulk`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'update', ids: someImages,
+      addFolders: [tags.find((f) => f.name === 'Scenery').id] }),
+  });
+  await page.reload(); await page.waitForSelector('.card'); await sleep(900);
+
+  await row('Scenery').click({ button: 'right' }); await sleep(400);
+  await page.locator('#ctxMenu .ctx-item', { hasText: 'Properties' }).click();
+  await sleep(400);
+  await page.locator('#folderPropsColors .fp-swatch:not(.fp-none)').first().click();
+  // The checkbox itself is under the switch; click what a person clicks.
+  await page.locator('.fp-nsfw .switch-track').click();
+  await page.click('#folderPropsOk'); await sleep(1200);
+
+  const afterProps = await fetch(`${BASE}api/folders`).then(r => r.json());
+  const sceneryNow = afterProps.find((f) => f.name === 'Scenery');
+  check('the folder keeps its colour', !!sceneryNow.color, JSON.stringify(sceneryNow));
+  check('and its NSFW flag', sceneryNow.nsfw === true);
+  check('the row shows both', await row('Scenery').locator('.folder-dot').count() === 1 &&
+    await row('Scenery').locator('.folder-nsfw').count() === 1);
+
+  const inFolder = await fetch(`${BASE}api/images?limit=20&folder=${sceneryNow.id}`)
+    .then(r => r.json());
+  check('every image in the folder took the colour',
+    inFolder.items.length === 3 && inFolder.items.every((i) => i.color === sceneryNow.color),
+    JSON.stringify(inFolder.items.map((i) => i.color)));
+  check('and every one of them is marked NSFW',
+    inFolder.items.every((i) => i.nsfwManual === true),
+    JSON.stringify(inFolder.items.map((i) => i.nsfwManual)));
+
+  // Something filed in afterwards takes them as well.
+  const later = (await fetch(`${BASE}api/images?limit=20`).then(r => r.json()))
+    .items.find((i) => !someImages.includes(i.id) && i.color !== sceneryNow.color);
+  await fetch(`${BASE}api/images/bulk`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'update', ids: [later.id], addFolders: [sceneryNow.id] }),
+  });
+  await sleep(400);
+  const joined = (await fetch(`${BASE}api/images/${later.id}`).then(r => r.json()));
+  check('an image filed there later inherits them too',
+    joined.color === sceneryNow.color && joined.nsfwManual === true,
+    JSON.stringify({ color: joined.color, nsfw: joined.nsfwManual }));
 
   check('no native browser dialogs anywhere', nativeDialogs === 0);
   check('no page errors', errors.length === 0, errors.slice(0, 4).join(' | '));

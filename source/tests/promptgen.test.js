@@ -93,7 +93,9 @@ let fail=0; const ck=(n,ok,d)=>{console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'
 
   // Going back to the gallery must still work.
   await p.click('.tool-tab[data-tool="gallery"]'); await sleep(800);
-  ck('the gallery is unharmed by all of that', await p.locator('.card').count()===7);
+  // Six of the seven seeds: the flagged one is on the NSFW shelf.
+  ck('the gallery is unharmed by all of that', await p.locator('.card').count()===6,
+     `${await p.locator('.card').count()} cards`);
 
   // --- the redesign: groups, folding, section switches -----------------
   // The gallery check above left us on the other tab.

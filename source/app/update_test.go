@@ -569,3 +569,70 @@ func TestInstallRefusesAZip(t *testing.T) {
 		t.Fatal("a zip was handed to the operating system to run")
 	}
 }
+
+// A release tagged with words as well as numbers.
+//
+// The repo's own releases are tagged "Build-1.2.0". Trimming a leading "v"
+// left that whole string as the version, which compared as text against
+// "1.2.1", came out greater, and told everyone already on the newest build
+// that "Build Build-1.2.0" was available.
+func TestVersionFromTag(t *testing.T) {
+	cases := []struct{ tag, name, want string }{
+		{"v1.2.1", "", "1.2.1"},
+		{"1.2.1", "", "1.2.1"},
+		{"Build-1.2.0", "", "1.2.0"},
+		{"Build 1.2", "", "1.2"},
+		{"release", "Build 1.3.0", "1.3.0"},
+		{"", "", ""},
+	}
+	for _, c := range cases {
+		if got := versionFromTag(c.tag, c.name); got != c.want {
+			t.Errorf("versionFromTag(%q, %q) = %q, want %q", c.tag, c.name, got, c.want)
+		}
+	}
+}
+
+func TestSameBuildUnderAnotherTagIsNotAnUpdate(t *testing.T) {
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{
+			"tag_name": "Build-` + appVersion + `",
+			"name": "Build ` + appVersion + `",
+			"assets": [{"name":"s.exe","size":10,"browser_download_url":"http://x/s.exe"}]
+		}`))
+	}))
+	defer gh.Close()
+
+	u := NewUpdater(t.TempDir())
+	u.api = gh.URL
+	rel, err := u.Check()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel.Version != appVersion {
+		t.Errorf("version = %q, want %q", rel.Version, appVersion)
+	}
+	if rel.Newer {
+		t.Error("the build already running was offered as an update")
+	}
+	if p := u.Progress(); p.State != "uptodate" {
+		t.Errorf("state = %q, want uptodate", p.State)
+	}
+}
+
+// A tag with no number in it at all must not be treated as newer either.
+func TestWordyTagIsNeverNewer(t *testing.T) {
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"tag_name": "nightly", "name": "nightly", "assets": []}`))
+	}))
+	defer gh.Close()
+
+	u := NewUpdater(t.TempDir())
+	u.api = gh.URL
+	rel, err := u.Check()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel.Newer {
+		t.Errorf("%q was treated as newer than %q", rel.Version, appVersion)
+	}
+}

@@ -48,6 +48,12 @@ let naiCalls = 0;
 let naiFail = null;
 let anlasFixed = 4000;
 let anlasPurchased = 136;
+// When on, the stand-in charges for every generation, the way the real
+// account does - so the counter can be checked against a balance that
+// actually moves rather than one this app decided for itself.
+let anlasAuto = false;
+let anlasTier = 3;
+let anlasFree = true;
 let lastBody = null;   // the last payload NovelAI was sent, for checking
 let anlasBroken = false;
 const fakeNai = http.createServer((req, res) => {
@@ -58,12 +64,20 @@ const fakeNai = http.createServer((req, res) => {
     }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({
-      subscription: { trainingStepsLeft: {
-        fixedTrainingStepsLeft: anlasFixed,
-        purchasedTrainingSteps: anlasPurchased } },
+      subscription: {
+        tier: anlasTier,
+        trainingStepsLeft: {
+          fixedTrainingStepsLeft: anlasFixed,
+          purchasedTrainingSteps: anlasPurchased },
+        perks: {
+          unlimitedImageGeneration: anlasFree,
+          unlimitedImageGenerationLimits: [{ resolution: 1048576, maxPrompts: 0 }],
+        },
+      },
     }));
   }
   naiCalls++;
+  if (anlasAuto) anlasFixed = Math.max(0, anlasFixed - 30);
   if (naiFail) {
     res.writeHead(naiFail, { 'Content-Type': 'application/json' });
     return res.end('{"message":"nope"}');
@@ -204,6 +218,9 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
   await sleep(300);
 
   // --- the cost on the button -----------------------------------------
+  // On a model outside the free allowance, so what is being checked is the
+  // price rather than the account's perks - those get their own section.
+  await page.selectOption('#genModel', 'nai-diffusion-5-full'); await sleep(400);
   check('the button shows what a generation will cost',
     /Anlas/.test(await page.locator('#genGo').textContent()),
     await page.locator('#genGo').textContent());
@@ -373,7 +390,8 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
 
   check('the gallery still works after all that, with the kept image in it',
     (await (async () => { await page.click('.tool-tab[data-tool="gallery"]'); await sleep(700);
-      return page.locator('.card').count(); })()) === 9);
+      return page.locator('.card').count(); })()) === 8,
+    'the flagged seed is on the NSFW shelf, so All images is one short');
   // Everything in the settings grid has to stay inside the sidebar; the
   // number inputs pushed the second column off the edge once already.
   await page.click('.tool-tab[data-tool="generate"]'); await sleep(600);
@@ -598,6 +616,162 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
     (await page.locator('#genAnlas').textContent()).includes('—'),
     await page.locator('#genAnlas').textContent());
   anlasBroken = false;
+
+  // --- the counter follows the account, not this app's arithmetic -------
+  //
+  // Anlas can be spent on the website or in another window, so a figure
+  // that only ever counted down from what this app thought it had spent
+  // would drift away from the truth. The number moves the moment a
+  // generation finishes, and then NovelAI's own figure replaces it.
+  await page.reload(); await page.waitForSelector('.tool-tab'); await sleep(900);
+  await page.click('.tool-tab[data-tool="generate"]'); await sleep(1400);
+  check('the balance is on screen without hunting for it',
+    await page.locator('#genAnlas').isVisible() &&
+    (await page.locator('#genAnlas').textContent()).includes('4,136'),
+    await page.locator('#genAnlas').textContent());
+  const anlasSize = await page.locator('#genAnlas').evaluate(
+    (n) => parseFloat(getComputedStyle(n).fontSize));
+  check('and it is big enough to read at a glance', anlasSize >= 13,
+    `${anlasSize}px`);
+
+  // Spending it for real: the stand-in now charges, the way the account
+  // does.
+  anlasAuto = true;
+  await page.fill('#genPrompt', 'a balance test');
+  const callsBefore = naiCalls;
+  await page.click('#genGo'); await sleep(500);
+  // The page was reloaded above, so the once-a-session warning is back.
+  if (await page.locator('#confirmModal').isVisible()) {
+    await page.click('#confirmOk');
+  }
+  for (let i = 0; i < 60 && naiCalls === callsBefore; i++) await sleep(250);
+  await sleep(600);
+  check('the counter drops as soon as the generation lands',
+    !(await page.locator('#genAnlasDelta').isHidden()) &&
+    (await page.locator('#genAnlasDelta').textContent()).startsWith('−'),
+    await page.locator('#genAnlasDelta').textContent());
+  check('and says the figure is an estimate until it is confirmed',
+    await page.locator('#genAnlas').getAttribute('data-estimated') === 'yes',
+    await page.locator('#genAnlas').getAttribute('data-estimated'));
+
+  // Then the account's own number arrives and takes over.
+  await sleep(9500);
+  const settled = await page.locator('#genAnlas').textContent();
+  check('then NovelAI\'s own figure replaces the estimate',
+    settled.includes((anlasFixed + anlasPurchased).toLocaleString()) &&
+    await page.locator('#genAnlas').getAttribute('data-estimated') === 'no',
+    `${settled} vs ${(anlasFixed + anlasPurchased).toLocaleString()}`);
+  anlasAuto = false;
+
+  // Anlas spent somewhere else shows up when asked for.
+  anlasFixed = 2500;
+  await page.click('#genAnlasRefresh'); await sleep(1200);
+  check('and the refresh button picks up spending from anywhere else',
+    (await page.locator('#genAnlas').textContent()).includes('2,636'),
+    await page.locator('#genAnlas').textContent());
+  anlasFixed = 4000;
+  await page.click('#genAnlasRefresh'); await sleep(1000);
+
+  // --- what a generation costs -----------------------------------------
+  // NovelAI publishes the conditions for a free generation rather than its
+  // prices: one image, no bigger than a Normal size, 28 steps or fewer, no
+  // base image, V4.5 or older. Whether the account has them at all comes
+  // from the account.
+  await page.selectOption('#genModel', 'nai-diffusion-4-5-full'); await sleep(300);
+  await page.fill('#genSteps', '28'); await page.locator('#genSteps').blur(); await sleep(400);
+  check('a generation the account gets free says Free',
+    (await page.locator('#genGo').textContent()).includes('Free'),
+    await page.locator('#genGo').textContent());
+
+  await page.fill('#genSteps', '40'); await page.locator('#genSteps').blur(); await sleep(400);
+  check('but not past the step limit',
+    /Anlas/.test(await page.locator('#genGo').textContent()),
+    await page.locator('#genGo').textContent());
+  await page.fill('#genSteps', '28'); await page.locator('#genSteps').blur(); await sleep(300);
+  await page.selectOption('#genCount', '2'); await sleep(400);
+  check('and not for more than one image at a time',
+    /Anlas/.test(await page.locator('#genGo').textContent()),
+    await page.locator('#genGo').textContent());
+  await page.selectOption('#genCount', '1'); await sleep(300);
+  await page.selectOption('#genModel', 'nai-diffusion-5-full'); await sleep(400);
+  check('and not on V5, which is outside the allowance',
+    /Anlas/.test(await page.locator('#genGo').textContent()),
+    await page.locator('#genGo').textContent());
+
+  // An account without the perk is never told anything is free.
+  anlasFree = false; anlasTier = 1;
+  await page.selectOption('#genModel', 'nai-diffusion-4-5-full'); await sleep(300);
+  await page.click('#genAnlasRefresh'); await sleep(1200);
+  check('an account without free generations is never told it has them',
+    /Anlas/.test(await page.locator('#genGo').textContent()),
+    await page.locator('#genGo').textContent());
+  anlasFree = true; anlasTier = 3;
+  await page.click('#genAnlasRefresh'); await sleep(1000);
+
+  // --- weighted prompts are coloured in ---------------------------------
+  //
+  // `1.5::x::` asks for more of something and `-1::x::` asks for less. In a
+  // plain box they differ by one character, which is a thin way to tell
+  // apart "give me this" and "keep this out".
+  await page.fill('#genPrompt',
+    'a girl, 1.5::red scarf::, -1::hat::, standing');
+  await sleep(400);
+  const weights = await page.evaluate(() => {
+    const layer = document.querySelector('#genPrompt')
+      .closest('.hl-wrap').querySelector('.hl-layer');
+    const pick = (sel) => [...layer.querySelectorAll(sel)].map((n) => n.textContent);
+    const colour = (sel) => {
+      const n = layer.querySelector(sel);
+      return n ? getComputedStyle(n).color : '';
+    };
+    return {
+      pos: pick('.w-pos .w-text'),
+      neg: pick('.w-neg .w-text'),
+      plain: layer.textContent,
+      posColour: colour('.w-pos .w-num'),
+      negColour: colour('.w-neg .w-num'),
+      hidden: getComputedStyle(document.querySelector('#genPrompt')).color,
+    };
+  });
+  check('a positive weight is picked out', weights.pos.join('|') === 'red scarf',
+    weights.pos.join('|'));
+  check('and a negative one separately', weights.neg.join('|') === 'hat',
+    weights.neg.join('|'));
+  check('in two different colours',
+    weights.posColour !== weights.negColour && !!weights.posColour,
+    `${weights.posColour} vs ${weights.negColour}`);
+  check('the words themselves are all still there',
+    weights.plain.includes('a girl, 1.5::red scarf::, -1::hat::, standing'),
+    weights.plain);
+  check('and the field itself does not double the text',
+    /rgba\(0, 0, 0, 0\)|transparent/.test(weights.hidden), weights.hidden);
+
+  // What the box holds is what gets sent — the colouring is only paint.
+  check('what is typed is what is sent',
+    (await page.inputValue('#genPrompt')) === 'a girl, 1.5::red scarf::, -1::hat::, standing');
+
+  // Setting a value in code fires no input event, so the layer has to be
+  // repainted by hand or it keeps showing the previous prompt.
+  await page.evaluate(() => { gEl('genPrompt').value = '2::sunset::'; genUpdateCost(); });
+  await sleep(300);
+  check('a prompt filled in by the app is coloured too',
+    await page.evaluate(() => document.querySelector('#genPrompt')
+      .closest('.hl-wrap').querySelector('.w-pos .w-text')?.textContent) === 'sunset');
+
+  // Character boxes are rebuilt whenever one is added or removed, so their
+  // layers have to come back with them.
+  await page.click('#genAddChar'); await sleep(400);
+  await page.locator('.gen-char').last().locator('.gen-char-box')
+    .fill('-1.5::glasses::'); await sleep(400);
+  check('character boxes are coloured the same way',
+    await page.evaluate(() => {
+      const box = document.querySelectorAll('#genChars .gen-char-box');
+      const last = box[box.length - 1];
+      return last.closest('.hl-wrap')?.querySelector('.w-neg .w-text')?.textContent;
+    }) === 'glasses');
+  await page.locator('.gen-char').last().locator('[data-act="remove"]').click();
+  await sleep(300);
+  await page.fill('#genPrompt', '');
 
   // --- dropping a NovelAI PNG in ---------------------------------------
   await page.fill('#genPrompt', '');

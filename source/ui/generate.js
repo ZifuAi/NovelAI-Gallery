@@ -21,6 +21,104 @@ const GEN = {
 
 const genBare = (dataUrl) => String(dataUrl || '').replace(/^data:[^,]+,/, '');
 
+/* --- weighted prompts, coloured in ------------------------------------
+
+   NovelAI weights a piece of a prompt by writing the weight in front of it
+   between double colons: `1.5::red scarf::` pushes towards it, `-1::red
+   scarf::` pushes away. In a plain textarea both look like punctuation, and
+   the difference between the two - which is the difference between asking
+   for a thing and asking for its absence - is a single character.
+
+   A textarea cannot colour its own contents, so the text is drawn a second
+   time on a layer behind it, in the same font at the same size, and the
+   textarea's own text is made transparent with its caret left visible. The
+   layer is only ever read from: everything typed still goes into the real
+   field, so nothing about editing, undo, spellcheck or selection changes.
+*/
+
+// A weight is a number, then ::, then the text it applies to, then ::.
+// The inner part stops at the first :: so two weighted pieces in a row do
+// not merge into one.
+const GEN_WEIGHT_RE = /(-?\d+(?:\.\d+)?)::((?:[^:]|:(?!:))*)::/g;
+
+function genHighlightHtml(text) {
+  let out = '';
+  let last = 0;
+  const src = String(text || '');
+  GEN_WEIGHT_RE.lastIndex = 0;
+  let m;
+  while ((m = GEN_WEIGHT_RE.exec(src)) !== null) {
+    out += esc(src.slice(last, m.index));
+    const cls = Number(m[1]) < 0 ? 'w-neg' : 'w-pos';
+    out += `<span class="${cls}">`
+      + `<span class="w-num">${esc(m[1])}</span>`
+      + `<span class="w-mark">::</span>`
+      + `<span class="w-text">${esc(m[2])}</span>`
+      + `<span class="w-mark">::</span>`
+      + `</span>`;
+    last = m.index + m[0].length;
+  }
+  out += esc(src.slice(last));
+  // A trailing newline has no height of its own; without something after
+  // it the layer comes up one line short of the textarea and the colours
+  // slide out of place at the bottom.
+  return out + '\n';
+}
+
+/* Put a highlight layer behind one field. Safe to call again on a field
+   that already has one, since the character boxes are rebuilt whenever a
+   character is added or removed. */
+function genAttachHighlight(ta) {
+  if (!ta || ta.dataset.hl === 'on') return;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'hl-wrap';
+  ta.parentNode.insertBefore(wrap, ta);
+
+  const layer = document.createElement('div');
+  layer.className = 'hl-layer';
+  layer.setAttribute('aria-hidden', 'true');
+  wrap.appendChild(layer);
+  wrap.appendChild(ta);
+
+  ta.classList.add('hl-input');
+  ta.dataset.hl = 'on';
+
+  const paint = () => {
+    layer.innerHTML = genHighlightHtml(ta.value);
+    layer.scrollTop = ta.scrollTop;
+    layer.scrollLeft = ta.scrollLeft;
+  };
+  const follow = () => {
+    layer.scrollTop = ta.scrollTop;
+    layer.scrollLeft = ta.scrollLeft;
+  };
+  ta.addEventListener('input', paint);
+  ta.addEventListener('scroll', follow);
+  // The boxes can be dragged taller; the layer has to come with them.
+  if (window.ResizeObserver) {
+    new ResizeObserver(follow).observe(ta);
+  }
+  ta._hlPaint = paint;
+  paint();
+}
+
+/* Repaint every field. Called after anything that fills the boxes in code -
+   an import, a reuse, a prompt taken from the generator - because setting
+   .value fires no input event and the layer would keep showing the old
+   text under the new. */
+function genRepaintHighlights() {
+  document.querySelectorAll('#toolGenerate .hl-input').forEach((ta) => {
+    if (ta._hlPaint) ta._hlPaint();
+  });
+}
+
+/* Every prompt field on the tab, including any character box on screen. */
+function genHighlightAll() {
+  ['genPrompt', 'genNegative'].forEach((id) => genAttachHighlight(gEl(id)));
+  document.querySelectorAll('#genChars .gen-char-box').forEach(genAttachHighlight);
+}
+
 // NovelAI's own sizes. Anything else is allowed by the API but these are
 // the ones the models were trained around.
 const GEN_SIZES = [
@@ -113,12 +211,39 @@ function genAnlasEstimate(req) {
   return Math.max(1, Math.round((work / ref) * GEN_ANLAS_REF.anlas)) * req.count;
 }
 
+/* Whether this particular generation costs nothing.
+ *
+ * NovelAI publishes the conditions rather than the prices: a free
+ * generation is one image at a time, no larger than a Normal size, at most
+ * 28 steps, not worked from another picture, and on a V4.5-or-lower model.
+ * Whether the account gets them at all comes from the account itself, so
+ * this is not the app deciding someone is on Opus.
+ */
+function genIsFree(req) {
+  const b = genAnlasLast;
+  if (!b?.known || !b.freeGeneration) return false;
+  if (req.count !== 1) return false;              // more than one always costs
+  if (req.image) return false;                    // img2img and inpainting cost
+  if (req.width * req.height > (b.freeMaxPixels || 0)) return false;
+  if (req.steps > (b.freeMaxSteps || 0)) return false;
+  // V5 is outside the free allowance; V4.5 and older are inside it.
+  return !/diffusion-5/.test(String(req.model || ''));
+}
+
 function genUpdateCost() {
   const req = genRequest();
+  const label = `Generate ${req.count === 1 ? '1 image' : req.count + ' images'}`;
+  const free = genIsFree(req);
   const n = genAnlasEstimate(req);
-  gEl('genGo').innerHTML =
-    `<span>Generate ${req.count === 1 ? '1 image' : req.count + ' images'}</span>` +
-    `<span class="gen-cost" title="Estimated — NovelAI's own button is authoritative">≈ ${n} Anlas</span>`;
+  const cost = free
+    ? `<span class="gen-cost free" title="Your account generates free at this size, this many steps and this model — one image at a time. NovelAI's own button is authoritative.">Free</span>`
+    : `<span class="gen-cost" title="Estimated — NovelAI's own button is authoritative">≈ ${n} Anlas</span>`;
+  gEl('genGo').innerHTML = `<span>${label}</span>${cost}`;
+  // Anything that changes the request has usually just changed a prompt
+  // box too - an import, a reuse, a prompt brought over from the generator
+  // - and setting .value in code fires no input event, so the colours
+  // behind it would still be showing the text that was there before.
+  genRepaintHighlights();
 }
 
 function genRequest() {
@@ -222,6 +347,10 @@ function genRenderChars() {
       genRenderChars();
     });
   });
+
+  // The boxes are rebuilt from scratch here, so their highlight layers are
+  // too - a character's prompt is weighted the same way the scene's is.
+  genHighlightAll();
 }
 
 /* Per-character prompts out of an image's metadata.
@@ -572,6 +701,10 @@ async function genGenerate() {
     ? `Generating ${req.count} images…` : 'Generating…';
   genStartProgress(req);
 
+  // How many pictures actually arrived, which is what was actually paid
+  // for. Set inside the try; read in the finally that updates the balance.
+  let spent = 0;
+
   try {
     const res = await fetch('/api/nai/generate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -588,6 +721,7 @@ async function genGenerate() {
     }
 
     const images = data.images || [];
+    spent = images.length;
     if (res.status === 207) {
       // Some worked, some didn't. Both halves are worth saying: the ones
       // that arrived cost Anlas whatever happened to the rest.
@@ -628,7 +762,13 @@ async function genGenerate() {
     GEN.busy = false;
     gEl('genGo').disabled = false;
     genStopProgress();
-    genRefreshAnlas();
+    // The counter moves now, by what this was reckoned to cost, and then
+    // NovelAI's own figure lands on top of it. Only what actually arrived
+    // is counted: a run that produced nothing spent nothing.
+    if (spent > 0 && !genIsFree(req)) {
+      genAnlasSpend(genAnlasEstimate({ ...req, count: spent }));
+    }
+    genResyncAnlas();
   }
 }
 
@@ -697,38 +837,120 @@ function genStopProgress() {
   }, 450);
 }
 
-/* --- what's left in the account -------------------------------------- */
+/* --- what's left in the account --------------------------------------
+
+   The balance is the account's, not this app's, so the account is the only
+   thing that can be believed about it. Anlas can be spent on novelai.net,
+   in another window, or by a generation this app never saw, and a number
+   that only ever counted down from what it thought it had spent would drift
+   away from the truth quietly.
+
+   So: after generating, the figure drops immediately by what the generation
+   was estimated to cost, marked as an estimate, and then NovelAI is asked
+   what it really is and its answer replaces it. It is also re-read when the
+   tab is opened and every couple of minutes while it is being looked at. */
+
+// The last figure NovelAI gave, and whether what is on screen is that or a
+// guess standing in for it.
+let genAnlasLast = null;
+let genAnlasEstimated = false;
+let genAnlasTimer = null;
+
+function genAnlasUnknown(why) {
+  const box = gEl('genAnlas');
+  if (!box) return;
+  box.hidden = false;
+  box.dataset.known = 'no';
+  box.textContent = 'Anlas —';
+  box.title = why
+    ? `Could not read your balance: ${why}`
+    : 'Could not read your balance from NovelAI. Check the token in Settings.';
+  gEl('genAnlasSplit').textContent = '';
+}
+
+function genPaintAnlas(total, { estimated = false } = {}) {
+  const box = gEl('genAnlas');
+  if (!box) return;
+  box.hidden = false;
+  box.dataset.known = 'yes';
+  box.dataset.estimated = estimated ? 'yes' : 'no';
+  // Zero is a real balance and is shown as one: an Opus subscription with
+  // free generations genuinely sits at zero, and a blank there read as a
+  // fault when nothing was wrong.
+  box.textContent = `${Number(total || 0).toLocaleString()} Anlas`;
+
+  const split = gEl('genAnlasSplit');
+  if (estimated) {
+    box.title = 'Estimated after your last generation — checking with NovelAI…';
+    if (split) split.textContent = 'checking…';
+    return;
+  }
+  const b = genAnlasLast || {};
+  box.title = `${Number(b.fixed || 0).toLocaleString()} from your subscription · `
+    + `${Number(b.purchased || 0).toLocaleString()} bought`
+    + (b.tierName ? ` · ${b.tierName}` : '');
+  if (split) {
+    split.textContent = b.purchased
+      ? `${Number(b.fixed || 0).toLocaleString()} + ${Number(b.purchased).toLocaleString()} bought`
+      : (b.tierName || '');
+  }
+}
 
 async function genRefreshAnlas() {
   const box = gEl('genAnlas');
   if (!box) return;
-
-  // Always shown, because it was asked for and a figure that vanishes when
-  // it cannot be read is indistinguishable from one that is broken. What is
-  // never shown is a made-up number: not knowing says so.
-  const unknown = (why) => {
-    box.hidden = false;
-    box.dataset.known = 'no';
-    box.textContent = 'Anlas —';
-    box.title = why
-      ? `Could not read your balance: ${why}`
-      : 'Could not read your balance from NovelAI. Check the token in Settings.';
-  };
-
   try {
     const b = await fetch('/api/nai/anlas').then((r) => r.json());
-    if (!b?.known) return unknown(b?.reason);
-    box.hidden = false;
-    box.dataset.known = 'yes';
-    // Zero is a real balance and is shown as one. Opus subscriptions sit
-    // at zero fixed steps while the ordinary sizes are still free, so a
-    // blank here read as a fault when nothing was wrong.
-    box.textContent = `${Number(b.total || 0).toLocaleString()} Anlas`;
-    box.title = `${Number(b.fixed || 0).toLocaleString()} from your subscription · `
-      + `${Number(b.purchased || 0).toLocaleString()} bought`;
+    if (!b?.known) {
+      genAnlasLast = null;
+      return genAnlasUnknown(b?.reason);
+    }
+    genAnlasLast = b;
+    genAnlasEstimated = false;
+    genPaintAnlas(b.total);
+    genUpdateCost();   // free-generation limits may have changed with it
   } catch (e) {
-    unknown();
+    genAnlasUnknown();
   }
+}
+
+/* Take the estimated cost off straight away, so the number moves when the
+   generation does, then let the real figure land on top of it. */
+function genAnlasSpend(cost) {
+  if (!genAnlasLast?.known || !cost) return;
+  genAnlasEstimated = true;
+  const left = Math.max(0, Number(genAnlasLast.total || 0) - cost);
+  genPaintAnlas(left, { estimated: true });
+
+  const delta = gEl('genAnlasDelta');
+  if (delta) {
+    delta.hidden = false;
+    delta.textContent = `−${cost}`;
+    clearTimeout(delta._t);
+    delta._t = setTimeout(() => { delta.hidden = true; }, 4000);
+  }
+}
+
+/* NovelAI's own figure can take a moment to catch up with a generation it
+   has only just finished, so it is asked twice: once almost immediately and
+   once a few seconds later. The second answer is the one that sticks. */
+function genResyncAnlas() {
+  setTimeout(genRefreshAnlas, 1500);
+  setTimeout(genRefreshAnlas, 8000);
+}
+
+/* While the tab is being looked at, keep it current: Anlas spent anywhere
+   else - the website, another window - should show up here without anyone
+   having to press anything. */
+function genAnlasWatch(active) {
+  clearInterval(genAnlasTimer);
+  genAnlasTimer = null;
+  if (!active) return;
+  genRefreshAnlas();
+  genAnlasTimer = setInterval(() => {
+    if (document.hidden) return;   // nothing is being looked at
+    genRefreshAnlas();
+  }, 120000);
 }
 
 /* --- reading a prompt back out of a PNG -------------------------------
@@ -957,6 +1179,10 @@ async function genInit() {
   const followModel = () => {
     // "Other" reveals the box to type an identifier into.
     gEl('genModelCustom').hidden = gEl('genModel').value !== '';
+    // The price follows the model too: V5 is outside the free allowance
+    // that V4.5 and older fall inside, so the button was still saying
+    // "Free" after switching to a model that is not.
+    genUpdateCost();
   };
   gEl('genModel').addEventListener('change', followModel);
   gEl('genModelCustom').addEventListener('input', followModel);
@@ -965,6 +1191,15 @@ async function genInit() {
   // Straight to where the token lives, on the right tab, rather than
   // "it's in settings somewhere".
   gEl('genTokenSettings').addEventListener('click', () => openSettingsAt('capture'));
+
+  gEl('genAnlasRefresh').addEventListener('click', async (e) => {
+    const b = e.currentTarget;
+    b.disabled = true;
+    b.classList.add('spinning');
+    await genRefreshAnlas();
+    b.classList.remove('spinning');
+    b.disabled = false;
+  });
 
   document.querySelectorAll('.gen-segbtn').forEach((b) => {
     b.addEventListener('click', () => genSetPosMode(b.dataset.pos, true));
@@ -1129,6 +1364,7 @@ async function genInit() {
     gEl('genPrompt').value = built;
     const uc = document.getElementById('pgUC')?.value;
     if (uc) gEl('genNegative').value = uc;
+    genRepaintHighlights();
     toast('Brought over from the Prompt Generator');
   });
 
@@ -1157,6 +1393,7 @@ async function genInit() {
     if (file) genImportFile(file);
   });
 
+  genHighlightAll();
   genRenderChars();
   genPaintReference();
   genUpdateCost();

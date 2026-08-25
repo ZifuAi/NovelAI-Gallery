@@ -2647,6 +2647,66 @@ button, input { font: inherit; color: inherit; }
 
 .tag-mark { font-size: 11px; color: var(--text-faint); }
 
+/* What a folder passes on, shown on its row: the colour its images take
+   and whether everything in it counts as NSFW. */
+.folder-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sw);
+  flex: 0 0 auto;
+}
+.folder-nsfw {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: 4px;
+  padding: 0 3px;
+  flex: 0 0 auto;
+}
+
+/* The NSFW shelf. Red, because it is the one row in the sidebar that says
+   what is in it rather than where it is - and it is only there at all
+   while the filter is on. */
+.nav-nsfw .nav-label { color: var(--danger); font-weight: 600; }
+.nav-nsfw .nav-icon { color: var(--danger); }
+.nav-nsfw.active { background: color-mix(in srgb, var(--danger) 16%, transparent); }
+.nav-nsfw.active .nav-label { color: var(--danger); }
+
+/* The folder properties window. */
+.modal-panel.folderprops { width: min(440px, 92vw); }
+.fp-label {
+  display: block;
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.fp-colors { display: flex; flex-wrap: wrap; gap: 7px; }
+.fp-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: var(--sw);
+  cursor: pointer;
+  padding: 0;
+  outline: 2px solid transparent;
+}
+.fp-swatch.on { outline-color: var(--text); outline-offset: 2px; }
+.fp-swatch.fp-none {
+  background: var(--surface-3);
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1;
+  border: 1px dashed var(--border);
+}
+.fp-nsfw { margin-top: 16px; }
+
 /* Settings tabs */
 .settings-tabs {
   display: flex;
@@ -3333,6 +3393,67 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 }
 .gen-prompt { min-height: 130px; height: 150px; }
 
+/* --- weighted prompts, coloured in ---
+   A textarea cannot colour its own text, so the same text is drawn on a
+   layer underneath in the same font at the same size, and the real field's
+   text is made transparent with the caret left visible. Every metric here
+   has to match .pg-input.mono exactly - padding, font, line height, how it
+   wraps - or the colours slide out from under the words. */
+.hl-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  width: 100%;
+  display: block;
+}
+.hl-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  padding: 8px 11px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  color: var(--text);
+}
+.hl-input {
+  position: relative;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+}
+/* The layer paints the background instead, so the field still looks like a
+   field. */
+.hl-wrap::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  border-radius: var(--r-sm);
+}
+.hl-input::selection { background: var(--accent-soft); }
+
+/* Pushing towards something and pushing away from it differ by one
+   character, so they are told apart by colour rather than by reading. */
+:root { --w-pos: #4ade80; --w-pos-dim: #86efac; --w-neg: #ff8fa3; --w-neg-dim: #ffb3c1; }
+/* The same two hues, darkened enough to read on the light themes. */
+[data-theme="daylight"], [data-theme="paper"], [data-theme="mist"],
+[data-theme="linen"], [data-theme="meadow"], [data-theme="blossom"],
+[data-theme="porcelain"], [data-theme="sky"], [data-theme="honey"],
+[data-theme="lavender"] {
+  --w-pos: #157f3d; --w-pos-dim: #1f9e50;
+  --w-neg: #c2264a; --w-neg-dim: #d94469;
+}
+.w-pos .w-num, .w-pos .w-mark { color: var(--w-pos); font-weight: 700; }
+.w-pos .w-text { color: var(--w-pos-dim); }
+.w-neg .w-num, .w-neg .w-mark { color: var(--w-neg); font-weight: 700; }
+.w-neg .w-text { color: var(--w-neg-dim); }
+
 .gen-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
 .pg-label-dim { color: var(--text-faint); font-weight: 400; }
 
@@ -3662,18 +3783,45 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   transition: width 0.15s linear;
 }
 
+/* The balance, on its own line under the token. It is a running figure
+   people watch while they work, not a status badge, so it is sized to be
+   read at a glance from across the sidebar. */
+.anlas-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
 .gen-anlas {
-  margin-left: auto;
-  font-size: 10.5px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
   color: var(--accent);
-  padding: 1px 7px;
+  padding: 2px 9px;
   background: var(--accent-soft);
   border-radius: 999px;
   white-space: nowrap;
 }
-/* Both sit on the right; the balance goes first and the state after it. */
-.gen-anlas + .gen-token-state { margin-left: 6px; }
+/* A figure that has been guessed at rather than read says so, until the
+   real one lands on top of it. */
+.gen-anlas[data-estimated="yes"] { opacity: 0.72; font-style: italic; }
+.anlas-split { font-size: 10.5px; color: var(--text-faint); white-space: nowrap; }
+.anlas-delta {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--danger, #e5484d);
+  animation: anlas-drop 0.35s ease-out;
+}
+@keyframes anlas-drop {
+  from { opacity: 0; transform: translateY(-5px); }
+  to   { opacity: 1; transform: none; }
+}
+#genAnlasRefresh.spinning { animation: anlas-spin 0.7s linear infinite; }
+@keyframes anlas-spin { to { transform: rotate(360deg); } }
+
+/* A generation the account gets for nothing is worth saying plainly. */
+.gen-cost.free { color: var(--ok, #30a46c); }
 
 .gen-placeholder-drop {
   margin-top: 14px;
@@ -3959,3 +4107,46 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   border-top: 1px solid var(--border);
 }
 .import-hint { font-size: 11px; color: var(--text-faint); }
+
+/* --- where the library lives ---
+   The path is the thing being talked about, so it is shown as one: a real
+   path in a monospaced box, not a sentence with a folder name in it. */
+.store-row { margin-bottom: 10px; }
+.store-path {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+}
+.store-actions { display: flex; align-items: center; gap: 8px; }
+.store-note { font-size: 11.5px; color: var(--text-faint); }
+
+.store-choice { display: grid; gap: 8px; margin: 6px 0 4px; }
+.store-opt {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.store-opt:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.store-opt input { margin-top: 2px; accent-color: var(--accent); }
+.store-opt-text { display: block; }
+.store-opt-title { display: block; font-size: 13px; font-weight: 600; }
+.store-opt-desc {
+  display: block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+.store-custom { display: flex; gap: 8px; margin-top: 10px; }
+.store-custom .ask-input { flex: 1; min-width: 0; }

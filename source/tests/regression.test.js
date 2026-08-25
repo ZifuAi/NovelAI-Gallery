@@ -93,7 +93,11 @@ const waitForServer = () => new Promise((resolve, reject) => {
   await sleep(900);
 
   // --- the gallery ------------------------------------------------------
-  check('every seeded image is on screen', await page.locator('.card').count() === 7);
+  // Six of the seven: the explicit one is on the NSFW shelf, which is where
+  // the filter puts it rather than leaving it in with everything else.
+  check('every seeded image is on screen except the flagged one',
+    await page.locator('.card').count() === 6,
+    `${await page.locator('.card').count()} cards`);
   check('no page errors on first load', errors.length === 0, errors.join('\n        '));
 
   // Aspect ratios must survive the layout: the 1600x600 image has to be
@@ -108,12 +112,50 @@ const waitForServer = () => new Promise((resolve, reject) => {
     JSON.stringify(skewed));
 
   // --- explicit content -------------------------------------------------
+  // Its own shelf in the sidebar, red, and only there while the filter is.
+  check('the NSFW shelf is offered while the filter is on',
+    await page.locator('#navNsfw').isVisible());
+  check('and says how many are on it',
+    (await page.locator('#countNsfw').textContent()).trim() === '1',
+    await page.locator('#countNsfw').textContent());
+  check('while All images counts only the rest',
+    (await page.locator('#countAll').textContent()).trim() === '6',
+    await page.locator('#countAll').textContent());
+  check('and the shelf is labelled in red',
+    await page.locator('#navNsfw .nav-label').evaluate(
+      (n) => getComputedStyle(n).color) !== await page.locator(
+      '.nav-item[data-view="all"] .nav-label').evaluate((n) => getComputedStyle(n).color));
+
+  await page.click('#navNsfw'); await sleep(800);
+  check('the flagged image is on the shelf', await page.locator('.card').count() === 1);
   check('exactly the explicit image is covered',
     await page.locator('.card .nsfw-cover').count() === 1);
   await page.locator('.card .nsfw-reveal').first().click();
   await sleep(500);
   check('Reveal uncovers it',
     await page.locator('.card .nsfw-cover').count() === 0);
+
+  // Turning the filter off puts everything back together and takes the
+  // shelf away with it.
+  await api('/api/settings', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...(await api('/api/settings')), flagNsfw: false }),
+  });
+  await page.reload(); await page.waitForSelector('.card'); await sleep(900);
+  check('with the filter off the shelf is gone',
+    await page.locator('#navNsfw').isHidden());
+  check('and everything is back in All images',
+    await page.locator('.card').count() === 7,
+    `${await page.locator('.card').count()} cards`);
+  await api('/api/settings', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...(await api('/api/settings')), flagNsfw: true }),
+  });
+  await page.reload(); await page.waitForSelector('.card'); await sleep(900);
+  await page.click('#navNsfw'); await sleep(700);
+  await page.locator('.card .nsfw-reveal').first().click();
+  await sleep(400);
+  await page.click('.nav-item[data-view="all"]'); await sleep(700);
 
   // --- layouts ----------------------------------------------------------
   for (const layout of ['justified', 'grid', 'list', 'waterfall']) {
@@ -127,8 +169,9 @@ const waitForServer = () => new Promise((resolve, reject) => {
     const overflow = await page.evaluate(() =>
       document.documentElement.scrollWidth - document.documentElement.clientWidth);
     const visible = await page.locator('.card').count();
+    // Six, not seven: the flagged one is on the NSFW shelf.
     check(`${layout}: all images laid out, nothing overflows sideways`,
-      visible === 7 && overflow <= 1, `cards=${visible} overflowX=${overflow}`);
+      visible === 6 && overflow <= 1, `cards=${visible} overflowX=${overflow}`);
   }
 
   // --- nested folders ---------------------------------------------------
@@ -252,7 +295,7 @@ const waitForServer = () => new Promise((resolve, reject) => {
     check(`the ${t} tab shows its own pane and only its own`, shown && others === 1);
   }
   check('About knows which build this is',
-    (await page.locator('#aboutVersion').textContent()).trim() === 'Build 1.2.0');
+    (await page.locator('#aboutVersion').textContent()).trim() === 'Build 1.2.1');
 
   await page.keyboard.press('Escape');
   await sleep(300);

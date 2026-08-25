@@ -65,6 +65,18 @@ type Folder struct {
 	Order     int      `json:"order"`
 	Tags      []string `json:"tags"`
 	CreatedAt string   `json:"createdAt"`
+
+	// What a folder passes on to what is filed in it.
+	//
+	// A folder for a series, or for one commission, or for the things not
+	// to be left on screen: setting it once on the folder beats setting it
+	// on every picture that lands there. NSFW marks everything inside as
+	// flagged; Color gives everything inside the same label. Both are
+	// applied when an image joins the folder and when the folder's
+	// properties are saved, and neither is a lock afterwards - an image can
+	// still be marked or coloured by hand.
+	NSFW  bool   `json:"nsfw"`
+	Color string `json:"color,omitempty"`
 }
 
 type Settings struct {
@@ -90,6 +102,11 @@ type Settings struct {
 	// by default - replacing the program someone is in the middle of using
 	// is not something to do behind their back unless they asked for it.
 	AutoUpdate bool `json:"autoUpdate"`
+	// ImagesDir is where the pictures are kept, when that is somewhere
+	// other than the default folder beside the index. Written by the move
+	// in Settings and by the first-run choice, never by the settings
+	// screen echoing a value back - see UpdateSettings.
+	ImagesDir string `json:"imagesDir,omitempty"`
 	// LastUpdateCheck is the date (YYYY-MM-DD) of the last automatic check,
 	// which is what makes the prompt appear once on the first open of the
 	// day. The app writes it, not the settings screen, so UpdateSettings
@@ -638,7 +655,14 @@ type ListOpts struct {
 	Folder   string
 	// Colour of a folder tag: shows images filed under any folder
 	// carrying a tag of that colour.
-	Color  string
+	Color string
+	// Where flagged images go while the NSFW filter is on.
+	//
+	// "only" is the NSFW shelf itself; "hide" is everything else, which is
+	// what All images becomes once the two are separated. Empty leaves them
+	// mixed together, which is what the library is with the filter off -
+	// there is nothing to separate then.
+	NSFW   string
 	Sort   string
 	Limit  int
 	Offset int
@@ -859,6 +883,19 @@ func (s *Store) List(o ListOpts) ListResult {
 		if color != "" && strings.ToLower(r.Color) != color {
 			continue
 		}
+		// The shelf and everything else are two halves of one library, so
+		// they are decided by the same rule the blur uses: a manual mark
+		// beats the classifier, and the setting decides whether either
+		// counts at all.
+		if o.NSFW != "" {
+			flagged := effectiveNSFW(r, s.settings.FlagNSFW)
+			if o.NSFW == "only" && !flagged {
+				continue
+			}
+			if o.NSFW == "hide" && flagged {
+				continue
+			}
+		}
 		if wanted != nil {
 			found := false
 			for _, f := range r.Folders {
@@ -975,6 +1012,10 @@ func (s *Store) UpdateSettings(in Settings) Settings {
 	// Carrying it over means a save from the UI can't accidentally reset
 	// the daily check by echoing back a blank field.
 	in.LastUpdateCheck = s.settings.LastUpdateCheck
+	// Same reasoning for where the images live: it is changed by moving
+	// them, which is a real operation on real files, not by saving a form
+	// that happened to be holding an old value.
+	in.ImagesDir = s.settings.ImagesDir
 	s.settings = in
 	if s.settings.Theme == "" {
 		s.settings.Theme = "midnight"

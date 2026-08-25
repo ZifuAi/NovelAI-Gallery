@@ -69,9 +69,15 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
     await page.locator('.card').count() === 1);
   await page.locator('#viewMenu [data-color=""]').click();
   await sleep(700);
-  check('choosing it again clears the filter', await page.locator('.card').count() === 7);
+  // Six, not seven: the flagged image is on the NSFW shelf, not in All
+  // images, which is where the filter puts it.
+  check('choosing it again clears the filter', await page.locator('.card').count() === 6,
+    `${await page.locator('.card').count()} cards`);
 
   // --- 2. the NSFW toggle -----------------------------------------------
+  // The flagged image lives on the NSFW shelf now rather than in All
+  // images, so that is where it has to be looked at.
+  await page.click('#navNsfw'); await sleep(800);
   const explicit = imgs.find((i) => i.nsfwAuto);
   await page.evaluate((id) => {
     document.querySelector(`.card[data-id="${id}"] img`)?.click();
@@ -117,8 +123,10 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
   {
     await page.keyboard.press('Escape'); await sleep(500);
     const cardSel = `.card[data-id="${explicit.id}"]`;
-    // Start from a known state: reload so nothing is revealed.
+    // Start from a known state: reload so nothing is revealed, then back
+    // to the shelf the flagged image is kept on.
     await page.reload(); await page.waitForSelector('.card'); await sleep(900);
+    await page.click('#navNsfw'); await sleep(800);
     check('the flagged image starts covered',
       await page.locator(`${cardSel} .nsfw-cover`).count() === 1);
     check('and shows no un-hide button while it is covered',
@@ -186,6 +194,67 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
   const clearBtn = await page.locator('#clearGalleryBtn').isVisible();
   check('a tall pane scrolls rather than being cut off', reach.scrolled && clearBtn);
 
+  // --- where the library is kept ----------------------------------------
+  //
+  // The images are the part that grows to tens of gigabytes, and the drive
+  // Windows is on is often the wrong one. Moving them is moving real files,
+  // so this drives it through the interface and then looks on disk.
+  await page.click('.settings-tab[data-tab="library"]'); await sleep(400);
+  const shownPath = (await page.locator('#storePath').textContent()).trim();
+  const storage = await fetch(`${BASE}api/storage`).then(r => r.json());
+  check('Settings says where the images are kept',
+    shownPath === storage.imagesDir, `${shownPath} vs ${storage.imagesDir}`);
+  check('with a way to move them and a way to open the folder',
+    await page.locator('#storeMoveBtn').isVisible() &&
+    await page.locator('#storeOpenBtn').isVisible());
+
+  const countBefore = (await fetch(`${BASE}api/images?limit=50`).then(r => r.json())).total;
+  const dest = `${DATA}/moved-library`;
+  await page.click('#storeMoveBtn'); await sleep(500);
+  check('moving asks where to, with the default offered as a real choice',
+    await page.locator('#storeModal').isVisible() &&
+    await page.locator('#storeModal input[value="default"]').count() === 1);
+
+  await page.locator('#storeModal input[value="custom"]').check(); await sleep(300);
+  check('choosing a folder of your own reveals somewhere to put it',
+    await page.locator('#storeCustomRow').isVisible());
+  await page.fill('#storePathInput', dest);
+  await page.click('#storeOk'); await sleep(1500);
+
+  const after = await fetch(`${BASE}api/storage`).then(r => r.json());
+  check('the library moves to the folder that was chosen',
+    after.imagesDir === dest, `${after.imagesDir} vs ${dest}`);
+  check('and Settings says so straight away',
+    (await page.locator('#storePath').textContent()).trim() === dest);
+  const onDisk = fs.readdirSync(dest).filter((f) => f.endsWith('.png')).length;
+  check('every picture actually arrived', onDisk === countBefore, `${onDisk} of ${countBefore}`);
+  check('and the old folder is not still holding them',
+    !fs.existsSync(`${DATA}/gallery-storage/images`) ||
+    fs.readdirSync(`${DATA}/gallery-storage/images`).length === 0);
+
+  // The gallery has to keep working from the new place: the index stores
+  // file names, not paths, which is the whole reason this is safe.
+  await page.keyboard.press('Escape'); await sleep(400);
+  await page.reload(); await page.waitForSelector('.card'); await sleep(900);
+  const stillThere = await page.locator('.card img').first().evaluate(
+    (n) => n.naturalWidth > 0);
+  check('and the images still load from where they went', stillThere);
+
+  // A folder that cannot be used says why and changes nothing.
+  await page.click('#toolsSettingsBtn'); await sleep(400);
+  await page.click('.settings-tab[data-tab="library"]'); await sleep(400);
+  await page.click('#storeMoveBtn'); await sleep(500);
+  await page.locator('#storeModal input[value="custom"]').check(); await sleep(250);
+  await page.fill('#storePathInput', 'not-an-absolute-path');
+  await page.click('#storeOk'); await sleep(900);
+  check('a path that cannot work is refused in place',
+    await page.locator('#storeError').isVisible() &&
+    await page.locator('#storeModal').isVisible());
+  check('and the library has not moved',
+    (await fetch(`${BASE}api/storage`).then(r => r.json())).imagesDir === dest);
+  // Escape closes the move window; Settings stays open behind it.
+  await page.keyboard.press('Escape'); await sleep(400);
+
   // --- first-run setup teaches the API token, not the extension ---------
   //
   // The app generates images itself now. The token is what makes that work,
@@ -205,12 +274,23 @@ const check = (n, ok, d) => { console.log(`${ok?'PASS':'FAIL'}  ${n}${ok||!d?'':
 
   // Walk to the token step the way a person would.
   let hops = 0;
+  let sawStorageStep = false;
   while (hops < 8 && !(await page.locator('#obToken').count())) {
+    if (await page.locator('#obStorePath').count()) {
+      sawStorageStep = true;
+      check('first run says where the images will be kept',
+        (await page.locator('#obStorePath').textContent()).length > 3,
+        await page.locator('#obStorePath').textContent());
+      check('and offers to put them somewhere else',
+        await page.locator('#obStoreChoose').isVisible());
+    }
     await page.click('#onboardNext'); await sleep(500);
     hops++;
   }
   check('the setup guide reaches an API token step',
     await page.locator('#obToken').count() === 1);
+  check('and it passed the storage step on the way',
+    sawStorageStep, 'first run never offered a place to keep the images');
   const guide = await page.locator('#onboardBody').innerText();
   check('it says where to get the token',
     /Persistent API Token/i.test(guide), guide.slice(0, 200));

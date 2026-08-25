@@ -106,6 +106,10 @@ const $ = (id) => document.getElementById(id);
 const el = {};
 [
   'app', 'content', 'search', 'searchClear', 'countPill', 'countAll', 'countFav', 'countPin',
+  'countNsfw', 'navNsfw',
+  'folderModal', 'folderPropsTitle', 'folderPropsSub', 'folderPropsName',
+  'folderPropsColors', 'folderPropsTags', 'folderPropsNsfw', 'folderPropsError',
+  'folderPropsCancel', 'folderPropsOk',
   'refreshBtn', 'folderList', 'addFolderBtn', 'lightbox', 'viewerImg', 'detailsBody',
   'favBtn', 'pinBtn', 'closeBtn', 'toast', 'zoom', 'inspector', 'inspectorBody',
   'inspectorToggle', 'inspectorClose', 'settingsBtn', 'settingsModal', 'settingsClose',
@@ -440,10 +444,11 @@ function renderNSFWSwitch(container) {
         <span class="switch-title">Blur explicit images in the gallery</span>
         <span class="switch-desc">
           Images whose prompt describes explicit content are covered with a
-          Reveal button. Ordinary anatomy — "large breasts" and the like — is
-          not flagged, and undesired content is never read as evidence.
-          Opening an image always shows it. Turning this on or off re-checks
-          your whole library.
+          Reveal button and moved out of All images onto their own
+          <strong>NSFW</strong> shelf in the sidebar. Ordinary anatomy —
+          "large breasts" and the like — is not flagged, and undesired
+          content is never read as evidence. Opening an image always shows
+          it. Turning this off puts them all back with everything else.
         </span>
       </span>
     </label>`;
@@ -463,7 +468,11 @@ function renderNSFWSwitch(container) {
     }
     input.disabled = false;
     state.revealed.clear();
+    // The shelf appears or goes with the setting, and the counts either
+    // side of the split change with it.
+    renderLibraryNav();
     await load({ reset: true });
+    refreshCounts();
   });
 }
 
@@ -521,6 +530,7 @@ function renderSettings() {
   renderInterceptSwitch(el.interceptSwitch);
   renderNSFWSwitch(el.nsfwSwitch);
   renderTagManager(el.tagManager);
+  renderStorage();
   renderNaiToken();
   renderAbout();
 }
@@ -592,6 +602,155 @@ function imagePathOf(record) {
   const sep = storageInfo.imagesDir.includes('\\') ? '\\' : '/';
   return `${storageInfo.imagesDir}${sep}${record.filename}`;
 }
+
+/* --- where the library lives -------------------------------------------
+
+   The images are the part that grows to tens of gigabytes, and a system
+   drive is often the wrong place for them. Only the images move: the
+   index, the folder tree and the settings are small and stay put, and the
+   index stores file names rather than paths, which is what makes moving
+   the pictures out from under it safe. */
+
+async function renderStorage() {
+  const pathBox = document.getElementById('storePath');
+  if (!pathBox) return;
+  await loadStorageInfo();
+  pathBox.textContent = storageInfo?.imagesDir || 'unknown';
+  const note = document.getElementById('storeNote');
+  if (note) {
+    const custom = storageInfo?.imagesDir
+      && storageInfo.imagesDir !== storageInfo.defaultDir;
+    note.textContent = custom ? 'A folder you chose.' : 'The default folder.';
+  }
+}
+
+/* Ask where the library should be, and move it there.
+ *
+ * The same window at first run and afterwards; the only difference is that
+ * the first time there is nothing to move yet. */
+function storageDialog({ title, sub = '', okLabel = 'Save' }) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('storeModal');
+    const input = document.getElementById('storePathInput');
+    const err = document.getElementById('storeError');
+    const custom = document.getElementById('storeCustomRow');
+    const okBtn = document.getElementById('storeOk');
+    const cancelBtn = document.getElementById('storeCancel');
+    const browseBtn = document.getElementById('storeBrowse');
+    const radios = [...modal.querySelectorAll('input[name="storeWhere"]')];
+
+    document.getElementById('storeTitle').textContent = title;
+    document.getElementById('storeSub').textContent = sub;
+    document.getElementById('storeSub').hidden = !sub;
+    document.getElementById('storeDefaultPath').textContent =
+      storageInfo?.defaultDir || 'beside the app’s own data';
+    okBtn.textContent = okLabel;
+    err.hidden = true;
+    err.textContent = '';
+
+    const isCustom = !!storageInfo?.imagesDir
+      && storageInfo.imagesDir !== storageInfo.defaultDir;
+    radios.forEach((r) => { r.checked = isCustom ? r.value === 'custom' : r.value === 'default'; });
+    input.value = isCustom ? storageInfo.imagesDir : '';
+    const followChoice = () => {
+      custom.hidden = !modal.querySelector('input[name="storeWhere"]:checked').value.includes('custom');
+      if (!custom.hidden) input.focus();
+    };
+    followChoice();
+
+    modal.hidden = false;
+
+    const close = (answer) => {
+      modal.hidden = true;
+      radios.forEach((r) => r.removeEventListener('change', followChoice));
+      okBtn.removeEventListener('click', ok);
+      cancelBtn.removeEventListener('click', cancel);
+      browseBtn.removeEventListener('click', browse);
+      document.removeEventListener('keydown', key, true);
+      resolve(answer);
+    };
+
+    const browse = async () => {
+      // The system's own chooser where there is one; the box where there
+      // is not, which is every platform but Windows.
+      try {
+        const r = await fetch('/api/storage/browse', { method: 'POST' })
+          .then((x) => x.json());
+        if (r.path) { input.value = r.path; return; }
+        if (r.error) { err.textContent = r.error; err.hidden = false; }
+      } catch (e) {
+        err.textContent = 'Could not open a folder chooser — type the path instead.';
+        err.hidden = false;
+      }
+      input.focus();
+    };
+
+    const ok = async () => {
+      const wantsCustom = modal.querySelector('input[name="storeWhere"]:checked').value === 'custom';
+      const path = wantsCustom ? input.value.trim() : '';
+      if (wantsCustom && !path) {
+        err.textContent = 'Type a folder, or pick one with Browse.';
+        err.hidden = false;
+        input.focus();
+        return;
+      }
+      okBtn.disabled = true;
+      okBtn.textContent = 'Moving…';
+      let body = {};
+      try {
+        const res = await fetch('/api/storage/move', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path }),
+        });
+        body = await res.json().catch(() => ({}));
+        if (!res.ok || body.error) throw new Error(body.error || 'Could not move your images');
+      } catch (e) {
+        okBtn.disabled = false;
+        okBtn.textContent = okLabel;
+        err.textContent = e.message;
+        err.hidden = false;
+        return;
+      }
+      okBtn.disabled = false;
+      okBtn.textContent = okLabel;
+      await renderStorage();
+      toast(body.moved
+        ? `${body.moved} image${body.moved === 1 ? '' : 's'} moved to ${body.imagesDir}`
+        : `Images will be kept in ${body.imagesDir}`);
+      close(body);
+    };
+    const cancel = () => close(null);
+    const key = (e) => {
+      if (modal.hidden) return;
+      if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); cancel(); }
+    };
+
+    radios.forEach((r) => r.addEventListener('change', followChoice));
+    okBtn.addEventListener('click', ok);
+    cancelBtn.addEventListener('click', cancel);
+    browseBtn.addEventListener('click', browse);
+    document.addEventListener('keydown', key, true);
+  });
+}
+
+document.getElementById('storeMoveBtn')?.addEventListener('click', async () => {
+  await loadStorageInfo();
+  storageDialog({
+    title: 'Move your images',
+    sub: 'The picture files move; everything else stays where it is. '
+      + 'Nothing is deleted, and the gallery keeps working either way.',
+    okLabel: 'Move',
+  });
+});
+
+document.getElementById('storeOpenBtn')?.addEventListener('click', async () => {
+  try {
+    const res = await fetch('/api/storage/open', { method: 'POST' });
+    if (!res.ok) throw new Error();
+  } catch (e) {
+    toast('Could not open that folder');
+  }
+});
 
 async function revealImage(record, btn) {
   const original = btn ? btn.textContent : '';
@@ -743,6 +902,69 @@ async function renderExtensionSteps(container) {
       }
     });
   }
+}
+
+/* Choosing where the library lives, at first run.
+ *
+ * Asked here because it is easiest to answer before there is anything to
+ * move: a folder chosen now costs nothing, and the same choice later means
+ * shifting however many gigabytes have accumulated. It is the same window
+ * either way, so the answer is never final. */
+async function renderStorageStep(container) {
+  await loadStorageInfo();
+  container.innerHTML = `
+    <div class="steps">
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-text">
+          Right now your images will be kept here:
+          <div class="path-box"><code id="obStorePath"></code></div>
+          <div class="sub">
+            That is on the same drive as Windows. It is a perfectly good
+            place to start, and nothing has to change.
+          </div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num"></div>
+        <div class="step-text">
+          If you would rather keep them elsewhere — a second drive, usually —
+          choose that folder now.
+          <div class="browser-row">
+            <button class="btn primary" id="obStoreChoose">Choose a folder…</button>
+          </div>
+          <div class="sub" id="obStoreState"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout">
+      Only the picture files live there. The index, your folders and your
+      settings stay with the app, and you can move the library at any time
+      from <strong>Settings ▸ Library</strong>.
+    </div>`;
+
+  const paint = () => {
+    container.querySelector('#obStorePath').textContent =
+      storageInfo?.imagesDir || 'unknown';
+    const custom = storageInfo?.imagesDir
+      && storageInfo.imagesDir !== storageInfo.defaultDir;
+    container.querySelector('#obStoreState').textContent = custom
+      ? 'Your images will be kept in the folder you chose.'
+      : '';
+  };
+  paint();
+
+  container.querySelector('#obStoreChoose').addEventListener('click', async () => {
+    await storageDialog({
+      title: 'Where should your images be kept?',
+      sub: 'Nothing has been saved yet, so there is nothing to move — this '
+        + 'just decides where new images go.',
+      okLabel: 'Use this folder',
+    });
+    await loadStorageInfo();
+    paint();
+  });
 }
 
 /* The first-run guide to getting a NovelAI API token in.
@@ -914,6 +1136,13 @@ const ONBOARD_STEPS = [
     },
   },
   {
+    id: 'storage',
+    title: 'Where should your images be kept?',
+    lead: 'The library is the part that grows. Everything else — the index, '
+      + 'your folders and settings — is small and stays with the app.',
+    render(c) { renderStorageStep(c); },
+  },
+  {
     id: 'token',
     title: 'Set up image generation',
     lead: 'One paste, and the app can generate on your NovelAI account itself.',
@@ -1012,6 +1241,13 @@ function buildParams() {
   if (state.view === 'pinned') p.set('pinned', 'true');
   if (state.folderId) p.set('folder', state.folderId);
   if (state.color) p.set('color', state.color);
+  // With the filter on, All images is everything that is not flagged and
+  // the NSFW shelf is everything that is. Favourites, Pinned and the
+  // folders are deliberately left whole: those are places you went to on
+  // purpose, and a picture missing from a folder you filed it in yourself
+  // would look like the app had lost it.
+  if (state.view === 'nsfw') p.set('nsfw', 'only');
+  else if (state.view === 'all' && state.settings.flagNsfw) p.set('nsfw', 'hide');
   if (state.settings.sort) p.set('sort', state.settings.sort);
   return p;
 }
@@ -1047,16 +1283,34 @@ async function load({ reset, silent } = {}) {
 }
 
 async function refreshCounts() {
+  const split = !!state.settings.flagNsfw;
   try {
-    const [all, fav, pin] = await Promise.all([
-      fetch('/api/images?limit=1').then((r) => r.json()),
+    // All images counts what All images shows: with the filter on, the
+    // flagged ones are on their own shelf and are not in this number.
+    const [all, fav, pin, nsfw] = await Promise.all([
+      fetch(`/api/images?limit=1${split ? '&nsfw=hide' : ''}`).then((r) => r.json()),
       fetch('/api/images?limit=1&favorite=true').then((r) => r.json()),
       fetch('/api/images?limit=1&pinned=true').then((r) => r.json()),
+      split ? fetch('/api/images?limit=1&nsfw=only').then((r) => r.json())
+        : Promise.resolve({ total: 0 }),
     ]);
     el.countAll.textContent = all.total || '';
     el.countFav.textContent = fav.total || '';
     el.countPin.textContent = pin.total || '';
+    if (el.countNsfw) el.countNsfw.textContent = nsfw.total || '';
   } catch (e) { /* cosmetic */ }
+}
+
+/* The NSFW shelf exists only while the filter does.
+ *
+ * Turning the filter off puts the flagged images back in with everything
+ * else, so the shelf has nothing left to hold - and anyone standing on it
+ * at the time is walked back to All images rather than left looking at a
+ * view that no longer means anything. */
+function renderLibraryNav() {
+  const on = !!state.settings.flagNsfw;
+  if (el.navNsfw) el.navNsfw.hidden = !on;
+  if (!on && state.view === 'nsfw') selectView('all');
 }
 
 // ---------------------------------------------------------------- grid
@@ -1108,6 +1362,8 @@ function emptyState() {
   if (state.query) return stateBlock('No matches', `Nothing matched “${state.query}”. Try a shorter phrase, or a single tag.`);
   if (state.view === 'favorites') return stateBlock('No favorites yet', 'Open any image and hit Favorite to keep it here.');
   if (state.view === 'pinned') return stateBlock('Nothing pinned', 'Pinned images float to the top of every view.');
+  if (state.view === 'nsfw') return stateBlock('Nothing flagged',
+    'Images the classifier calls explicit — and any you mark yourself — are kept here rather than in All images.');
   if (state.folderId) return stateBlock('This folder is empty', 'Open an image and use Add to folder to file it here.');
   return stateBlock(
     'No images yet',
@@ -1938,18 +2194,33 @@ function imageMenu(ids) {
   return items;
 }
 
+/* What the folder already carries, said in a few words beside the menu
+   entry so it does not have to be opened to be read. */
+function folderPropsSummary(folder) {
+  const bits = [];
+  if (folder.color) bits.push(colorLabelName(folder.color));
+  if (folder.nsfw) bits.push('NSFW');
+  if ((folder.tags || []).length) bits.push(folder.tags.join(', '));
+  return bits.join(' · ') || 'name, colour, NSFW';
+}
+
 function folderRowMenu(folder) {
   return [
     { label: 'Open folder', icon: CTX_ICONS.folder, action: () => selectView('folder', folder.id) },
     'sep',
-    { label: 'Rename…', icon: CTX_ICONS.rename, action: () => renameFolder(folder) },
+    // Properties rather than Rename: renaming is one of the things you can
+    // do to a folder, and it was the only one with a way in.
+    {
+      label: 'Properties…',
+      detail: folderPropsSummary(folder),
+      icon: CTX_ICONS.rename,
+      action: () => editFolderProps(folder),
+    },
     {
       label: 'New subfolder…',
       icon: CTX_ICONS.folder,
       action: () => createFolder(folder.id, folder.name),
     },
-    { label: 'Tags…', detail: (folder.tags || []).join(', ') || 'none', icon: CTX_ICONS.tag,
-      action: () => editFolderTags(folder) },
     'sep',
     {
       label: 'Move to top level',
@@ -2765,6 +3036,16 @@ async function setNSFW(ids, value) {
   toast(value === null
     ? 'Back to automatic'
     : (value ? 'Marked as NSFW' : 'No longer marked as NSFW'));
+
+  // Marking something moves it between All images and the NSFW shelf, so
+  // the view it just left has to lose it and the counts either side have
+  // to change. Only while the filter is on: with it off nothing moves.
+  if (state.settings.flagNsfw) {
+    refreshCounts();
+    if (state.view === 'all' || state.view === 'nsfw') {
+      load({ reset: true, silent: true });
+    }
+  }
 }
 
 async function setFlag(record, fieldName, value) {
@@ -2981,9 +3262,15 @@ function renderFolders() {
     row.style.paddingLeft = `${10 + f.depth * 14}px`;
 
     const kids = hasKids.has(f.id);
+    // What the folder passes on, shown on the row: a folder that colours
+    // and flags everything filed in it should say so where you file things,
+    // not only in a window you have to open.
     row.innerHTML = `
       <span class="nav-icon folder-icon${kids ? ' twisty' : ''}">${folderIcon(isFolderOpen(f.id), kids)}</span>
       <span class="nav-label">${esc(f.name)}</span>
+      ${f.color ? `<span class="folder-dot" style="--sw:${esc(f.color)}"
+        title="Everything here is labelled ${esc(colorLabelName(f.color))}"></span>` : ''}
+      ${f.nsfw ? '<span class="folder-nsfw" title="Everything filed here is marked NSFW">18+</span>' : ''}
       ${(f.tags || []).length ? '<span class="tag-mark" title="' + esc((f.tags || []).join(', ')) + '">#</span>' : ''}
       <span class="nav-count">${f.count || ''}</span>`;
 
@@ -2998,13 +3285,13 @@ function renderFolders() {
       selectView('folder', f.id);
     });
 
-    // Double-click to rename, the way every file manager does it. The
+    // Double-click for properties, the way every file manager does it. The
     // single clicks that precede it just open the folder first, which is
     // where you'd want to be anyway.
     row.addEventListener('dblclick', (e) => {
       if (kids && e.target.closest('.folder-icon')) return; // that's the twisty
       e.preventDefault();
-      renameFolder(f);
+      editFolderProps(f);
     });
 
     // Images dropped here get filed; folders dropped here get re-parented.
@@ -3109,15 +3396,14 @@ async function moveFolder(id, parentId, index) {
  */
 async function createFolder(parent = '', parentName = '') {
   let made = null;
-  await askText({
+  await folderProps({
     title: parent ? 'New subfolder' : 'New folder',
-    sub: parent ? `Inside ${parentName}` : '',
-    placeholder: 'Folder name',
+    sub: parent ? `Inside ${parentName}` : 'What you set here is passed on to every image filed in it.',
     okLabel: 'Create',
-    submit: async (name) => {
+    submit: async ({ name, color, nsfw, tags }) => {
       const res = await fetch('/api/folders', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, parentId: parent }),
+        body: JSON.stringify({ name, parentId: parent, color, nsfw, tags }),
       });
       if (!res.ok) {
         return (await res.json().catch(() => ({}))).error || 'Could not create that folder';
@@ -3136,51 +3422,130 @@ async function createFolder(parent = '', parentName = '') {
   return made;
 }
 
-async function renameFolder(folder) {
-  await askText({
-    title: 'Rename folder',
-    value: folder.name,
-    placeholder: 'Folder name',
-    okLabel: 'Rename',
-    submit: async (name) => {
-      if (name === folder.name) return null;
+/* A folder's properties: its name, what it is called, what it passes on.
+ *
+ * This replaced Rename. Renaming was one of four things you could do to a
+ * folder and the only one with a home, so the other three lived in menu
+ * entries nobody found. They are all one window now, and saving it pushes
+ * the inherited parts - the colour label and the NSFW flag - onto the
+ * images filed in that folder. */
+async function editFolderProps(folder) {
+  await folderProps({
+    title: 'Folder properties',
+    sub: 'The colour and the NSFW flag are passed on to the images in this folder.',
+    okLabel: 'Save',
+    folder,
+    submit: async ({ name, color, nsfw, tags }) => {
       const res = await fetch(`/api/folders/${folder.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, color, nsfw, tags }),
       });
-      if (!res.ok) return (await res.json().catch(() => ({}))).error || 'Could not rename that';
-      state.folders = await res.json();
+      if (!res.ok) {
+        return (await res.json().catch(() => ({}))).error || 'Could not save those properties';
+      }
+      const body = await res.json();
+      state.folders = body.folders || body;
+      toast(body.applied
+        ? `Saved — ${body.applied} image${body.applied === 1 ? '' : 's'} updated`
+        : 'Folder properties saved');
       return null;
     },
   });
   renderFolders();
   refreshUndoState();
+  await loadColorLabels();
+  refreshCounts();
   load({ reset: true, silent: true });
 }
 
-async function editFolderTags(folder) {
-  await askText({
-    title: 'Folder tags',
-    sub: 'Separate with commas. Tags are searchable, and so are the images inside.',
-    value: (folder.tags || []).join(', '),
-    placeholder: 'commissions, wip, reference',
-    // Save, not Create: an empty box is a real answer here - it clears the
-    // tags - so it must not be treated as "you haven't typed anything yet".
-    okLabel: 'Save',
-    submit: async (text) => {
-      const tags = text.split(',').map((t) => t.trim()).filter(Boolean);
-      const res = await fetch(`/api/folders/${folder.id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tags }),
+/* The properties window itself, used for both making a folder and editing
+   one. `submit` returns an error string to keep the window open with the
+   message beside the fields, or null when it worked - the same contract
+   askText uses, for the same reason. */
+function folderProps({ title, sub = '', okLabel = 'Save', folder = null, submit }) {
+  return new Promise((resolve) => {
+    let color = folder?.color || '';
+
+    el.folderPropsTitle.textContent = title;
+    el.folderPropsSub.textContent = sub;
+    el.folderPropsSub.hidden = !sub;
+    el.folderPropsName.value = folder?.name || '';
+    el.folderPropsName.placeholder = 'Folder name';
+    el.folderPropsTags.value = (folder?.tags || []).join(', ');
+    el.folderPropsNsfw.checked = !!folder?.nsfw;
+    el.folderPropsOk.textContent = okLabel;
+    el.folderPropsError.hidden = true;
+    el.folderPropsError.textContent = '';
+
+    // The same palette the images use, plus a way back to no colour at all.
+    const paintColors = () => {
+      el.folderPropsColors.innerHTML =
+        `<button class="fp-swatch fp-none${color ? '' : ' on'}" data-color=""
+           title="No colour">✕</button>`
+        + LABEL_COLORS.map(([hex]) => `
+          <button class="fp-swatch${color === hex ? ' on' : ''}" data-color="${hex}"
+            style="--sw:${hex}" title="${esc(colorLabelName(hex))}"></button>`).join('');
+      el.folderPropsColors.querySelectorAll('.fp-swatch').forEach((b) => {
+        b.addEventListener('click', () => { color = b.dataset.color; paintColors(); });
       });
-      if (!res.ok) return 'Could not save those tags';
-      state.folders = await res.json();
-      toast(tags.length ? `Tagged: ${tags.join(', ')}` : 'Tags cleared');
-      return null;
-    },
+    };
+    paintColors();
+
+    el.folderModal.hidden = false;
+    el.folderPropsName.focus();
+    el.folderPropsName.select();
+
+    let busy = false;
+    const close = (answer) => {
+      el.folderModal.hidden = true;
+      el.folderPropsOk.removeEventListener('click', ok);
+      el.folderPropsCancel.removeEventListener('click', cancel);
+      el.folderModal.removeEventListener('mousedown', backdrop);
+      document.removeEventListener('keydown', key, true);
+      resolve(answer);
+    };
+
+    const ok = async () => {
+      if (busy) return;
+      const name = el.folderPropsName.value.trim();
+      if (!name) { el.folderPropsName.focus(); return; }
+      const values = {
+        name,
+        color,
+        nsfw: el.folderPropsNsfw.checked,
+        tags: el.folderPropsTags.value.split(',').map((t) => t.trim()).filter(Boolean),
+      };
+      if (!submit) return close(values);
+
+      busy = true;
+      el.folderPropsOk.disabled = true;
+      const error = await submit(values).catch(() => 'Something went wrong');
+      busy = false;
+      el.folderPropsOk.disabled = false;
+      if (error) {
+        // Left open, with the reason next to the box that has to change.
+        el.folderPropsError.textContent = error;
+        el.folderPropsError.hidden = false;
+        el.folderPropsName.focus();
+        return;
+      }
+      close(values);
+    };
+    const cancel = () => close(null);
+    const backdrop = (e) => { if (e.target === el.folderModal) cancel(); };
+    const key = (e) => {
+      if (el.folderModal.hidden) return;
+      if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); cancel(); }
+      if (e.key === 'Enter' && e.target !== el.folderPropsTags) {
+        e.stopPropagation(); e.preventDefault(); ok();
+      }
+    };
+
+    el.folderPropsOk.addEventListener('click', ok);
+    el.folderPropsCancel.addEventListener('click', cancel);
+    el.folderModal.addEventListener('mousedown', backdrop);
+    document.addEventListener('keydown', key, true);
   });
-  renderFolders();
-  refreshUndoState();
 }
 
 // --- colour labels and the view menu -----------------------------------
@@ -3695,6 +4060,10 @@ function renderNotes(md) {
 // --- the corner prompt --------------------------------------------------
 
 function showUpdateToast(rel) {
+  // Nothing newer, nothing to say. The server decides this, but a prompt
+  // offering the build you are already running is the kind of thing that
+  // should be impossible from more than one direction.
+  if (!rel?.newer || !rel.assetUrl) return;
   latestRelease = rel;
   el.updateToastTitle.textContent = `Build ${rel.version} is available`;
   el.updateToastBody.innerHTML = `
@@ -3850,16 +4219,24 @@ function paintUpdateStatus(p) {
   el.checkUpdateBtn.disabled = busy;
   if (el.installLatestBtn) el.installLatestBtn.disabled = busy;
 
+  // Only when there is genuinely something newer. "Available" on its own is
+  // not enough: a check that finds the build you are already running sets
+  // that state too, and offering to install it is how you end up being told
+  // to update to what you have.
   const canInstall = (p.state === 'available' && p.release?.newer && p.release?.assetUrl)
     || p.state === 'ready';
   el.installUpdateBtn.hidden = !canInstall;
   el.installUpdateBtn.disabled = busy;
   if (canInstall) {
-    el.installUpdateBtn.textContent = p.state === 'ready'
-      ? 'Install now'
-      : `Install Build ${p.release.version}`;
+    // The build number belongs in the status line beside it, not on the
+    // button. What the button does is the same either way.
+    el.installUpdateBtn.textContent = p.state === 'ready' ? 'Install now' : 'Install latest';
     el.installUpdateBtn.dataset.action = p.state === 'ready' ? 'install' : 'download';
   }
+  // One "install the newest thing" button at a time. The standalone one is
+  // there for reinstalling the current build; when there is a real update
+  // waiting, the button above is the one that matters.
+  if (el.installLatestBtn) el.installLatestBtn.hidden = canInstall;
 }
 
 function renderAbout() {
@@ -4078,6 +4455,11 @@ function selectTool(name) {
   // use it.
   if (name === 'prompt' && typeof pgInit === 'function') pgInit();
   if (name === 'generate' && typeof genInit === 'function') genInit();
+  // The balance is only worth re-reading while it is being looked at.
+  // Anlas spent on the website or in another window shows up here without
+  // anyone having to ask for it, and nothing is polled behind a tab nobody
+  // has open.
+  if (typeof genAnlasWatch === 'function') genAnlasWatch(name === 'generate');
 }
 
 el.toolTabs?.addEventListener('click', (e) => {
@@ -4091,6 +4473,9 @@ el.toolTabs?.addEventListener('click', (e) => {
   refreshUndoState();
   await loadColorLabels();
   renderInspector();
+  // Before the first load, so All images is asked for the right half of
+  // the library rather than being corrected a moment later.
+  renderLibraryNav();
   loadFolders();
   await load({ reset: true });
   maybeStartOnboarding();
